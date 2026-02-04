@@ -4,31 +4,90 @@ import Lead from '../models/lead.model.js';
 import Invoice from '../models/invoice.model.js';
 import Payout from '../models/payout.model.js';
 import mongoose from 'mongoose';
+import bcrypt from 'bcryptjs';
 import { getPaginationMeta } from '../utils/helpers.js';
 
 /**
- * Create Franchise
+ * Create Franchise (and franchise_owner User for login)
  */
 export const createFranchise = async (req, res, next) => {
   try {
-    // Validate required fields
-    if (!req.body.name) {
+    const { name, ownerName, email, mobile, password, address, status, commissionStructure } = req.body;
+
+    if (!name?.trim()) {
       return res.status(400).json({
         success: false,
         message: 'Franchise name is required',
       });
     }
+    if (!ownerName?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Owner name is required',
+      });
+    }
+    if (!email?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Owner email is required for login',
+      });
+    }
+    if (!mobile?.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Owner mobile is required',
+      });
+    }
+    if (!password || password.length < 6) {
+      return res.status(400).json({
+        success: false,
+        message: 'Password is required and must be at least 6 characters',
+      });
+    }
 
-    // Create franchise in database
-    const franchise = await Franchise.create(req.body);
+    const existingUser = await User.findOne({
+      $or: [{ email: email.toLowerCase().trim() }, { mobile: mobile.trim() }],
+    });
+    if (existingUser) {
+      return res.status(400).json({
+        success: false,
+        message: 'A user with this email or mobile already exists',
+      });
+    }
 
-    // Fetch the created franchise with populated fields
+    const franchisePayload = {
+      name: name.trim(),
+      ownerName: ownerName.trim(),
+      email: email.toLowerCase().trim(),
+      mobile: mobile.trim(),
+      status: status || 'active',
+      address: address || {},
+      commissionStructure: commissionStructure || {},
+    };
+    const franchise = await Franchise.create(franchisePayload);
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const ownerUser = await User.create({
+      name: ownerName.trim(),
+      email: franchise.email,
+      mobile: franchise.mobile,
+      password: hashedPassword,
+      role: 'franchise_owner',
+      franchise: franchise._id,
+      franchiseOwned: franchise._id,
+      status: 'active',
+    });
+
+    franchise.owner = ownerUser._id;
+    await franchise.save();
+
     const populatedFranchise = await Franchise.findById(franchise._id)
       .populate('owner', 'name email');
 
     console.log('✅ Franchise created successfully:', {
       id: franchise._id,
       name: franchise.name,
+      ownerId: ownerUser._id,
       status: franchise.status,
     });
 

@@ -19,8 +19,6 @@ export const getAgentDashboard = async (req, res, next) => {
     const pendingLeads = await Lead.countDocuments({ agent: agentId, verificationStatus: 'pending' });
     const verifiedLeads = await Lead.countDocuments({ agent: agentId, verificationStatus: 'verified' });
     const completedLeads = await Lead.countDocuments({ agent: agentId, status: 'completed' });
-    const freshLeads = await Lead.countDocuments({ agent: agentId, leadType: 'fresh' });
-    const disbursedLeads = await Lead.countDocuments({ agent: agentId, leadType: 'disbursed' });
 
     // Get invoice statistics
     const pendingInvoices = await Invoice.countDocuments({ agent: agentId, status: 'pending' });
@@ -64,7 +62,7 @@ export const getAgentDashboard = async (req, res, next) => {
       agent: agentId,
       status: 'pending',
     })
-      .populate('lead', 'caseNumber loanAmount')
+      .populate('lead', 'loanAccountNo loanAmount')
       .populate('franchise', 'name')
       .sort({ createdAt: -1 })
       .limit(10);
@@ -74,7 +72,7 @@ export const getAgentDashboard = async (req, res, next) => {
       agent: agentId,
       status: 'escalated',
     })
-      .populate('lead', 'caseNumber loanAmount')
+      .populate('lead', 'loanAccountNo loanAmount')
       .populate('franchise', 'name')
       .sort({ escalatedAt: -1 })
       .limit(10);
@@ -87,8 +85,6 @@ export const getAgentDashboard = async (req, res, next) => {
           pending: pendingLeads,
           verified: verifiedLeads,
           completed: completedLeads,
-          fresh: freshLeads,
-          disbursed: disbursedLeads,
         },
         invoices: {
           pending: pendingInvoices,

@@ -20,11 +20,11 @@ const leadRouter = Router();
 leadRouter.use(authenticate);
 
 // CRUD operations
-leadRouter.post('/', requireRole('agent'), createLead);
+leadRouter.post('/', createLead);
 leadRouter.get('/', getLeads);
 leadRouter.get('/:id', getLeadById);
 leadRouter.put('/:id', updateLead);
-leadRouter.delete('/:id', requireRole('super_admin', 'relationship_manager'), deleteLead);
+leadRouter.delete('/:id', requireRole('super_admin', 'relationship_manager', 'franchise_owner'), deleteLead);
 leadRouter.put('/:id/status', updateLeadStatus);
 
 // Verification (Staff/Franchise Owner)
@@ -34,7 +34,7 @@ leadRouter.post('/:id/verify', requireRole('relationship_manager', 'franchise_ow
 leadRouter.get('/:id/documents', getLeadDocuments);
 leadRouter.post('/:id/documents', uploadLeadDocument);
 
-// Version history (Admin and Franchise Owner only)
-leadRouter.get('/:id/history', requireRole('super_admin', 'relationship_manager', 'franchise_owner'), getLeadHistory);
+// Version history (Agents can view their own leads, admins and franchise owners can view all)
+leadRouter.get('/:id/history', getLeadHistory);
 
 export default leadRouter;

@@ -33,7 +33,7 @@ export const getInvoices = async (req, res, next) => {
     const invoices = await Invoice.find(query)
       .populate('agent', 'name email')
       .populate('franchise', 'name')
-      .populate('lead', 'caseNumber loanType')
+      .populate('lead', 'loanAccountNo loanType')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -232,7 +232,7 @@ export const createInvoice = async (req, res, next) => {
     const invoice = await Invoice.create(req.body);
 
     const populatedInvoice = await Invoice.findById(invoice._id)
-      .populate('lead', 'caseNumber loanType')
+      .populate('lead', 'loanAccountNo loanType')
       .populate('agent', 'name email')
       .populate('franchise', 'name');
 
@@ -255,7 +255,7 @@ export const updateInvoice = async (req, res, next) => {
       new: true,
       runValidators: true,
     })
-      .populate('lead', 'caseNumber loanType')
+      .populate('lead', 'loanAccountNo loanType')
       .populate('agent', 'name email')
       .populate('franchise', 'name');
 

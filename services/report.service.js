@@ -42,8 +42,7 @@ class ReportService {
 
       // Prepare data for Excel
       const reportData = leads.map((lead) => ({
-        'Case Number': lead.caseNumber || 'N/A',
-        'Lead Type': lead.leadType,
+        'Loan Account No': lead.loanAccountNo || 'N/A',
         'Mobile': lead.applicantMobile,
         'Email': lead.applicantEmail || 'N/A',
         'Loan Type': lead.loanType,
@@ -97,12 +96,12 @@ class ReportService {
       const invoices = await Invoice.find(query)
         .populate('agent', 'name email')
         .populate('franchise', 'name')
-        .populate('lead', 'caseNumber loanType')
+        .populate('lead', 'loanAccountNo loanType')
         .sort({ createdAt: -1 });
 
       const reportData = invoices.map((invoice) => ({
         'Invoice Number': invoice.invoiceNumber,
-        'Case Number': invoice.lead?.caseNumber || 'N/A',
+        'Loan Account No': invoice.lead?.loanAccountNo || 'N/A',
         'Agent': invoice.agent?.name || 'N/A',
         'Franchise': invoice.franchise?.name || 'N/A',
         'Commission Amount': formatCurrency(invoice.commissionAmount),

@@ -91,7 +91,7 @@ class EmailService {
    */
   async sendBankEmail(bankData, leadData) {
     try {
-      const subject = `New Lead Submission - ${leadData.caseNumber || 'Lead'}`;
+      const subject = `New Lead Submission - ${leadData.loanAccountNo || 'Lead'}`;
       
       const body = `
         <html>
@@ -100,7 +100,7 @@ class EmailService {
             <p>Dear ${bankData.name},</p>
             <p>A new lead has been submitted for processing:</p>
             <ul>
-              <li><strong>Case Number:</strong> ${leadData.caseNumber || 'N/A'}</li>
+              <li><strong>Loan Account No:</strong> ${leadData.loanAccountNo || 'N/A'}</li>
               <li><strong>Loan Type:</strong> ${leadData.loanType}</li>
               <li><strong>Loan Amount:</strong> ₹${leadData.loanAmount.toLocaleString('en-IN')}</li>
               <li><strong>Agent:</strong> ${leadData.agent?.name || 'N/A'}</li>

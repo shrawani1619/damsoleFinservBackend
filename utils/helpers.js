@@ -36,21 +36,6 @@ export async function generatePayoutNumber() {
 }
 
 /**
- * Generate unique case number
- * Format: CASE-YYYYMMDD-XXXXX
- * @returns {String} Case number
- */
-export function generateCaseNumber() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  const random = String(Math.floor(Math.random() * 100000)).padStart(5, '0');
-  
-  return `CASE-${year}${month}${day}-${random}`;
-}
-
-/**
  * Generate bank CSV file for payout
  * @param {Object} payout - Payout object
  * @returns {Promise<Object>} CSV file data
@@ -228,8 +213,6 @@ function normalizeValue(value) {
 export function trackLeadChanges(oldData, newData, fieldsToCheck = null) {
   const changes = [];
   const allFieldsToTrack = [
-    'caseNumber',
-    'leadType',
     'applicantMobile',
     'applicantEmail',
     'loanType',
@@ -259,7 +242,7 @@ export function trackLeadChanges(oldData, newData, fieldsToCheck = null) {
     'asmName',
     'asmEmail',
     'asmMobile',
-    'codeUse',
+    'dsaCode',
     'branch',
   ];
 

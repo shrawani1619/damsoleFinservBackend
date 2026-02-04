@@ -5,17 +5,30 @@ import User from '../models/user.model.js';
  */
 export const createAgent = async (req, res, next) => {
   try {
-    // Ensure role is set to agent
     const agentData = {
       ...req.body,
       role: 'agent',
     };
 
+    if (req.user.role === 'franchise_owner' && req.user.franchiseOwned) {
+      agentData.franchise = agentData.franchise || req.user.franchiseOwned;
+    }
+
     const agent = await User.create(agentData);
+
+    const agentWithFranchise = await User.findById(agent._id).select('-password').populate('franchise', 'name');
+    console.log('[Agent Created]', {
+      id: agent._id,
+      name: agent.name,
+      email: agent.email,
+      franchiseId: agent.franchise,
+      franchiseName: agentWithFranchise?.franchise?.name ?? 'NA',
+      createdBy: req.user.role,
+    });
 
     res.status(201).json({
       success: true,
-      data: agent,
+      data: agentWithFranchise,
     });
   } catch (error) {
     next(error);

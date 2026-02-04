@@ -5,7 +5,7 @@ import { requireRole } from '../middlewares/role.middleware.js';
 
 const staffRouter = Router();
 
-staffRouter.post('/', authenticate, requireRole('super_admin', 'relationship_manager'), createStaff);
+staffRouter.post('/', authenticate, requireRole('super_admin', 'relationship_manager', 'agent'), createStaff);
 staffRouter.get('/', authenticate, getStaff);
 staffRouter.get('/:id', authenticate, requireRole('super_admin', 'relationship_manager'), getStaffById);
 staffRouter.put('/:id', authenticate, requireRole('super_admin', 'relationship_manager'), updateStaff);

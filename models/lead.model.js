@@ -9,26 +9,9 @@ import './agent.model.js';
  */
 const leadSchema = new mongoose.Schema(
   {
-    // Case/Lead identification
-    caseNumber: {
-      type: String,
-      unique: true,
-      index: true,
-      sparse: true,
-    },
-
-    // Lead type
-    leadType: {
-      type: String,
-      enum: ['fresh', 'disbursed'],
-      required: true,
-      default: 'fresh',
-    },
-
     // Applicant details
     applicantMobile: {
       type: String,
-      required: true,
       index: true,   
     },
 
@@ -175,7 +158,7 @@ const leadSchema = new mongoose.Schema(
     asmEmail: String,
     asmMobile: String,
     
-    codeUse: String,
+    dsaCode: String,
     branch: String,
   },
   { timestamps: true }
@@ -186,6 +169,5 @@ leadSchema.index({ agent: 1, status: 1 });
 leadSchema.index({ franchise: 1, status: 1 });
 leadSchema.index({ bank: 1, status: 1 });
 leadSchema.index({ verificationStatus: 1 });
-leadSchema.index({ leadType: 1 });
 
 export default mongoose.model('Lead', leadSchema);

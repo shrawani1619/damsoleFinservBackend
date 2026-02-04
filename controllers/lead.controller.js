@@ -5,7 +5,7 @@ import User from '../models/user.model.js';
 import commissionService from '../services/commission.service.js';
 import invoiceService from '../services/invoice.service.js';
 import emailService from '../services/email.service.js';
-import { generateCaseNumber, getPaginationMeta, trackLeadChanges } from '../utils/helpers.js';
+import { getPaginationMeta, trackLeadChanges } from '../utils/helpers.js';
 
 /**
  * Create Lead
@@ -13,7 +13,6 @@ import { generateCaseNumber, getPaginationMeta, trackLeadChanges } from '../util
 export const createLead = async (req, res, next) => {
   try {
     // Generate case number
-    const caseNumber = generateCaseNumber();
 
     // Ensure agent is set from authenticated user if role is agent
     let agentId = req.body.agent;
@@ -27,7 +26,6 @@ export const createLead = async (req, res, next) => {
 
     const leadData = {
       ...req.body,
-      caseNumber,
       agent: agentId,
       franchise: franchiseId,
     };
@@ -79,12 +77,10 @@ export const getLeads = async (req, res, next) => {
 
     const query = {};
 
-    // Role-based filtering
+    // Role-based filtering: agent = own leads, franchise_owner = own + agents' leads, super_admin = all
     if (req.user.role === 'agent') {
-      // Agents are stored in User model, so use User._id directly
       query.agent = req.user._id;
     } else if (req.user.role === 'franchise_owner') {
-      // Franchise owners should only see leads from their franchise
       if (!req.user.franchiseOwned) {
         return res.status(400).json({
           success: false,
@@ -93,12 +89,17 @@ export const getLeads = async (req, res, next) => {
       }
       query.franchise = req.user.franchiseOwned;
     }
+    // super_admin / relationship_manager: no base filter → all leads; optional filters below
 
     if (status) query.status = status;
     if (verificationStatus) query.verificationStatus = verificationStatus;
-    if (agentId) query.agent = agentId;
-    if (franchiseId) query.franchise = franchiseId;
     if (bankId) query.bank = bankId;
+    // Optional scope filters only for roles that can see all leads
+    const canFilterScope = ['super_admin', 'relationship_manager'].includes(req.user.role);
+    if (canFilterScope) {
+      if (agentId) query.agent = agentId;
+      if (franchiseId) query.franchise = franchiseId;
+    }
 
     const leads = await Lead.find(query)
       .populate('agent', 'name email mobile')
@@ -220,6 +221,10 @@ export const updateLead = async (req, res, next) => {
 
     // Ensure agent ID is valid ObjectId format
     const updateData = { ...req.body };
+    if (updateData.dsaCode !== undefined) {
+      updateData.codeUse = updateData.dsaCode;
+      delete updateData.dsaCode;
+    }
     if (updateData.agent && !mongoose.Types.ObjectId.isValid(updateData.agent)) {
       return res.status(400).json({
         success: false,
@@ -284,11 +289,11 @@ export const updateLeadStatus = async (req, res, next) => {
       });
     }
 
-    // Role-based access control
-    if (req.user.role === 'agent' && existingLead.agent.toString() !== req.user._id.toString()) {
+    // Role-based access control - agents cannot update lead status
+    if (req.user.role === 'agent') {
       return res.status(403).json({
         success: false,
-        error: 'Access denied. You can only update your own leads.',
+        error: 'Access denied. Agents can only view leads, not update their status.',
       });
     }
 
@@ -620,11 +625,11 @@ export const getLeadHistory = async (req, res, next) => {
       }
     }
 
-    // Only admin and franchise_owner can view history
-    if (!['super_admin', 'relationship_manager', 'franchise_owner'].includes(req.user.role)) {
+    // Agents can view history of their own leads, admins and franchise owners can view all
+    if (req.user.role === 'agent' && lead.agent.toString() !== req.user._id.toString()) {
       return res.status(403).json({
         success: false,
-        error: 'Access denied. Only admins and franchise owners can view lead history.',
+        error: 'Access denied. You can only view history of your own leads.',
       });
     }
 
