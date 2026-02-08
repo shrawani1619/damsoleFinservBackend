@@ -32,14 +32,23 @@ const agentSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ['agent'],
       default: 'agent',
     },
 
-    franchise: {
+    // Link to either a Franchise or a RelationshipManager.
+    // Uses Mongoose's dynamic ref (refPath) so the agent can be owned/managed by
+    // one of multiple model types.
+    managedBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Franchise',
+      refPath: 'managedByModel',
       required: true,
+      index: true,
+    },
+    managedByModel: {
+      type: String,
+      required: true,
+      enum: ['Franchise', 'RelationshipManager'],
+      index: true,
     },
 
     commissionPercentage: {

@@ -10,6 +10,7 @@ import payoutRouter from './routes/payout.route.js';
 import commissionRouter from './routes/commission.route.js';
 import dashboardRouter from './routes/dashboard.route.js';
 import franchiseRouter from './routes/franchise.route.js';
+import relationshipManagerRouter from './routes/relationshipManager.route.js';
 import bankRouter from './routes/bank.route.js';
 import userRouter from './routes/user.route.js';
 import documentRouter from './routes/document.route.js';
@@ -17,6 +18,7 @@ import reportRouter from './routes/report.route.js';
 import agentRouter from './routes/agent.route.js';
 import staffRouter from './routes/staff.route.js';
 import notificationRouter from './routes/notification.route.js';
+import bankManagerRouter from './routes/bankManager.route.js';
 import connectDB from './config/db.js';
 import { seedDefaultAdmin } from './utils/seedAdmin.js';
 
@@ -47,6 +49,7 @@ app.use('/api/payouts', payoutRouter);
 app.use('/api/commissions', commissionRouter);
 app.use('/api/dashboard', dashboardRouter);
 app.use('/api/franchises', franchiseRouter);
+app.use('/api/relationship-managers', relationshipManagerRouter);
 app.use('/api/banks', bankRouter);
 app.use('/api/users', userRouter);
 app.use('/api/documents', documentRouter);
@@ -54,6 +57,7 @@ app.use('/api/reports', reportRouter);
 app.use('/api/agents', agentRouter);
 app.use('/api/staff', staffRouter);
 app.use('/api/notifications', notificationRouter);
+app.use('/api/bank-managers', bankManagerRouter);
 
 // Error handler (must be last)
 app.use(errorHandler);

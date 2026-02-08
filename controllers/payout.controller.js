@@ -1,6 +1,7 @@
 import payoutService from '../services/payout.service.js';
 import { getPaginationMeta } from '../utils/helpers.js';
 import Payout from '../models/payout.model.js';
+import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } from '../utils/regionalScope.js';
 
 /**
  * Get all payouts
@@ -25,11 +26,23 @@ export const getPayouts = async (req, res, next) => {
         });
       }
       query.franchise = req.user.franchiseOwned;
+    } else if (req.user.role === 'regional_manager') {
+      const franchiseIds = await getRegionalManagerFranchiseIds(req);
+      if (!franchiseIds?.length) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      query.franchise = franchiseId && franchiseIds.some((fid) => fid.toString() === franchiseId)
+        ? franchiseId
+        : { $in: franchiseIds };
     }
 
     if (status) query.status = status;
     if (agentId) query.agent = agentId;
-    if (franchiseId) query.franchise = franchiseId;
+    if (franchiseId && req.user.role !== 'regional_manager') query.franchise = franchiseId;
 
     const payouts = await Payout.find(query)
       .populate('agent', 'name email')
@@ -88,6 +101,15 @@ export const getPayoutById = async (req, res, next) => {
         });
       }
     }
+    if (req.user.role === 'regional_manager') {
+      const canAccess = await regionalManagerCanAccessFranchise(req, payout.franchise);
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only view payouts from franchises associated with you.',
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -112,6 +134,22 @@ export const processPayouts = async (req, res, next) => {
       });
     }
 
+    if (req.user.role === 'regional_manager') {
+      const Invoice = (await import('../models/invoice.model.js')).default;
+      const franchiseIds = await getRegionalManagerFranchiseIds(req);
+      if (franchiseIds?.length) {
+        const invoices = await Invoice.find({ _id: { $in: invoiceIds } }).select('franchise').lean();
+        for (const inv of invoices) {
+          if (!franchiseIds.some((fid) => fid.toString() === (inv.franchise && inv.franchise.toString()))) {
+            return res.status(403).json({
+              success: false,
+              error: 'Access denied. One or more invoices are not in your scope.',
+            });
+          }
+        }
+      }
+    }
+
     const payouts = await payoutService.processPayouts(invoiceIds, req.user._id);
 
     res.status(200).json({
@@ -129,6 +167,12 @@ export const processPayouts = async (req, res, next) => {
  */
 export const generateBankCsvFile = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const p = await Payout.findById(req.params.id).select('franchise');
+      if (p && !(await regionalManagerCanAccessFranchise(req, p.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const payout = await payoutService.generateBankCsvFile(req.params.id, req.user._id);
 
     res.status(200).json({
@@ -146,6 +190,12 @@ export const generateBankCsvFile = async (req, res, next) => {
  */
 export const confirmPayment = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const p = await Payout.findById(req.params.id).select('franchise');
+      if (p && !(await regionalManagerCanAccessFranchise(req, p.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const { transactionId, transactionDate, paymentMethod, uploadedFile } = req.body;
 
     if (!transactionId) {
@@ -181,6 +231,15 @@ export const confirmPayment = async (req, res, next) => {
  */
 export const createPayout = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager' && req.body.franchise) {
+      const canAccess = await regionalManagerCanAccessFranchise(req, req.body.franchise);
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only create payouts for franchises associated with you.',
+        });
+      }
+    }
     // Generate payoutNumber if not provided
     const { generatePayoutNumber } = await import('../utils/helpers.js');
     const payoutData = {
@@ -226,6 +285,15 @@ export const createPayout = async (req, res, next) => {
  */
 export const updatePayout = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const existing = await Payout.findById(req.params.id).select('franchise');
+      if (existing && !(await regionalManagerCanAccessFranchise(req, existing.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+      if (req.body.franchise && !(await regionalManagerCanAccessFranchise(req, req.body.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const payout = await Payout.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
@@ -256,6 +324,12 @@ export const updatePayout = async (req, res, next) => {
  */
 export const deletePayout = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const p = await Payout.findById(req.params.id).select('franchise');
+      if (p && !(await regionalManagerCanAccessFranchise(req, p.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const payout = await Payout.findByIdAndDelete(req.params.id);
 
     if (!payout) {

@@ -2,13 +2,13 @@ import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
 
 /**
- * Franchise model - canonical version
- * - Combines account/auth fields and profile/performance metadata
- * - Ensures a single default export
+ * Merged RelationshipManager model
+ * - Combines account/auth fields (credentials + hooks) and profile/performance metadata
+ * - Replaces the separate relationshipManager.model.js to provide a single canonical model
  */
-const franchiseSchema = new mongoose.Schema(
+const relationshipSchema = new mongoose.Schema(
   {
-    // Identity / Auth
+    // Identity / Auth fields
     name: {
       type: String,
       required: true,
@@ -34,28 +34,33 @@ const franchiseSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      default: 'franchise',
+      default: 'relationship_manager',
     },
 
-    // Owner / linking
+    // Links to agents this Relationship Manager manages
+    agents: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Agent',
+        index: true,
+      },
+    ],
+
+    // Reference to a user record that "owns" this account/profile if desired
     owner: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       index: true,
     },
+
     ownerName: String,
 
-    // Commission structure / business fields
+    // Commission / business fields
     commissionPercentage: {
       type: Number,
       default: 0,
     },
-    commissionStructure: {
-      type: mongoose.Schema.Types.Mixed,
-      default: {},
-    },
 
-    // KYC and bank info
     kyc: {
       pan: String,
       aadhaar: String,
@@ -89,7 +94,7 @@ const franchiseSchema = new mongoose.Schema(
 
     lastLoginAt: Date,
 
-    // Performance metrics
+    // Performance metrics & reporting
     performanceMetrics: {
       totalLeads: {
         type: Number,
@@ -106,6 +111,7 @@ const franchiseSchema = new mongoose.Schema(
       lastUpdated: Date,
     },
 
+    // Operational links
     regionalManager: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
@@ -123,11 +129,12 @@ const franchiseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Indexes
-franchiseSchema.index({ owner: 1, status: 1 });
-franchiseSchema.index({ status: 1 });
-franchiseSchema.index({ regionalManager: 1 });
+// Indexes for common queries
+relationshipSchema.index({ owner: 1, status: 1 });
+relationshipSchema.index({ status: 1 });
+relationshipSchema.index({ regionalManager: 1 });
 // Note: Authentication credentials (password) are stored on the related User model.
-// Franchise is a profile document and should not contain password fields.
+// RelationshipManager is a profile document and should not contain password fields.
 
-export default mongoose.model('Franchise', franchiseSchema);
+export default mongoose.model('RelationshipManager', relationshipSchema);
+

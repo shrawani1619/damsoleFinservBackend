@@ -77,7 +77,8 @@ class CommissionService {
       // Determine base amount based on commission basis
       let baseAmount = 0;
       if (rule.commissionBasis === 'sanctioned') {
-        baseAmount = lead.sanctionedAmount || 0;
+        // sanctionedAmount removed — use loanAmount as the base for sanctioned-basis commissions
+        baseAmount = lead.loanAmount || 0;
       } else {
         // disbursed basis
         baseAmount = lead.disbursedAmount || 0;

@@ -16,16 +16,37 @@ export const createLead = async (req, res, next) => {
     // Generate case number
 
     let agentId = req.body.agent;
-    let franchiseId = req.body.franchise;
+    let associated = req.body.associated;
+    let associatedModel = req.body.associatedModel;
 
+    // Normalize empty strings
+    if (associated === '') associated = undefined;
+    if (associatedModel === '') associatedModel = undefined;
+
+    // Agent users always create leads for themselves; infer associated from their managedBy
     if (req.user.role === 'agent') {
       agentId = req.user._id;
-      franchiseId = req.user.franchise;
+      associated = req.user.managedBy || req.user.franchise || undefined;
+      associatedModel = req.user.managedByModel || (req.user.franchise ? 'Franchise' : undefined);
     }
-    if (req.user.role === 'regional_manager' && franchiseId) {
+
+    // Franchise owners create leads for their franchise
+    if (req.user.role === 'franchise') {
+      associated = req.user.franchiseOwned || req.user.franchise || associated;
+      associatedModel = 'Franchise';
+    }
+
+    // Relationship managers create leads for themselves
+    if (req.user.role === 'relationship_manager') {
+      associated = req.user.relationshipManagerOwned || associated;
+      associatedModel = 'RelationshipManager';
+    }
+
+    // Regional manager: if associatedModel === 'Franchise' enforce regional scope
+    if (req.user.role === 'regional_manager' && associatedModel === 'Franchise' && associated) {
       const franchiseIds = await getRegionalManagerFranchiseIds(req);
       if (franchiseIds !== null && franchiseIds.length > 0) {
-        const allowed = franchiseIds.some((fid) => fid.toString() === franchiseId.toString());
+        const allowed = franchiseIds.some((fid) => fid.toString() === associated.toString());
         if (!allowed) {
           return res.status(403).json({
             success: false,
@@ -35,17 +56,37 @@ export const createLead = async (req, res, next) => {
       }
     }
 
+    // If associated not provided, try to infer it from the agent (useful when RM creates lead for an agent)
+    if (!associated && agentId) {
+      try {
+        const agentUser = await User.findById(agentId).select('managedBy managedByModel');
+        if (agentUser && agentUser.managedBy) {
+          associated = agentUser.managedBy;
+          associatedModel = agentUser.managedByModel;
+        }
+      } catch (err) {
+        console.warn('Unable to infer associated from agent:', err);
+      }
+    }
+
     const leadData = {
       ...req.body,
       agent: agentId,
-      franchise: franchiseId,
+      associated,
+      associatedModel,
     };
 
-    // Validate agent ID format
+    // Validate agent and associated ID formats
     if (leadData.agent && !mongoose.Types.ObjectId.isValid(leadData.agent)) {
       return res.status(400).json({
         success: false,
         error: 'Invalid agent ID format',
+      });
+    }
+    if (leadData.associated && !mongoose.Types.ObjectId.isValid(leadData.associated)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid associated ID format',
       });
     }
 
@@ -55,7 +96,7 @@ export const createLead = async (req, res, next) => {
 
     const populatedLead = await Lead.findById(lead._id)
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -83,7 +124,7 @@ export const createLead = async (req, res, next) => {
  */
 export const getLeads = async (req, res, next) => {
   try {
-    const { page = 1, limit = 10, status, verificationStatus, agentId, franchiseId, bankId } = req.query;
+    const { page = 1, limit = 10, status, verificationStatus, agentId, associatedId, associatedModel, franchiseId, bankId } = req.query;
     const skip = (page - 1) * limit;
 
     const query = {};
@@ -98,7 +139,18 @@ export const getLeads = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      query.franchise = req.user.franchiseOwned;
+      // Franchise owners can only see leads for agents under their franchise (and leads where they are the agent)
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.length) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      query.agent = { $in: allowedAgentIds };
     } else if (req.user.role === 'regional_manager') {
       const franchiseIds = await getRegionalManagerFranchiseIds(req);
       if (franchiseIds === null || franchiseIds.length === 0) {
@@ -108,22 +160,67 @@ export const getLeads = async (req, res, next) => {
           pagination: getPaginationMeta(page, limit, 0),
         });
       }
-      query.franchise = { $in: franchiseIds };
+      // regional managers only manage franchises; restrict to leads associated with franchises in their scope
+      query.associated = { $in: franchiseIds };
+      query.associatedModel = 'Franchise';
+    } else if (req.user.role === 'relationship_manager') {
+      // Relationship managers should only see leads for agents associated with their RM profile
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      if (!rmId) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      // find agents managed by this RM
+      const agentIds = await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id');
+      const allowedAgentIds = agentIds || [];
+      // include leads where agent is the relationship manager user (if any)
+      allowedAgentIds.push(req.user._id);
+      query.agent = { $in: allowedAgentIds };
     }
-    // super_admin / relationship_manager: no base filter → all leads; optional filters below
+    // super_admin: no base filter → all leads; optional filters below
 
     if (status) query.status = status;
     if (verificationStatus) query.verificationStatus = verificationStatus;
     if (bankId) query.bank = bankId;
     const canFilterScope = ['super_admin', 'relationship_manager'].includes(req.user.role);
     if (canFilterScope) {
-      if (agentId) query.agent = agentId;
-      if (franchiseId) query.franchise = franchiseId;
+      if (agentId) {
+        // If relationship_manager, ensure requested agentId is within RM's scope
+        if (req.user.role === 'relationship_manager') {
+          const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+          let rmId = req.user.relationshipManagerOwned;
+          if (!rmId && RM) {
+            const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+            if (rmDoc) rmId = rmDoc._id;
+          }
+          const allowed = await User.exists({ _id: agentId, managedByModel: 'RelationshipManager', managedBy: rmId });
+          if (!allowed) {
+            return res.status(403).json({ success: false, error: 'Access denied.' });
+          }
+        }
+        query.agent = agentId;
+      }
+      // Support new associatedId/associatedModel query params; fall back to legacy franchiseId if present
+      if (associatedId) {
+        query.associated = associatedId;
+        if (associatedModel) query.associatedModel = associatedModel;
+      } else if (franchiseId) {
+        query.associated = franchiseId;
+        query.associatedModel = 'Franchise';
+      }
     }
 
     const leads = await Lead.find(query)
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile')
@@ -151,7 +248,7 @@ export const getLeadById = async (req, res, next) => {
   try {
     const lead = await Lead.findById(req.params.id)
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile');
@@ -178,19 +275,43 @@ export const getLeadById = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      if (lead.franchise.toString() !== req.user.franchiseOwned.toString()) {
+      // Franchise owners can view leads for agents under their franchise (and leads where they are the agent)
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(lead.agent.toString())) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only view leads from your franchise.',
+          error: 'Access denied. You can only view leads associated with your franchise agents.',
         });
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, lead.franchise);
+      const canAccess = lead.associatedModel === 'Franchise'
+        ? await regionalManagerCanAccessFranchise(req, lead.associated)
+        : true;
       if (!canAccess) {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You can only view leads from franchises associated with you.',
+        });
+      }
+    }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      // Get agents for this RM
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(lead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only view leads associated with your agents.',
         });
       }
     }
@@ -240,19 +361,42 @@ export const updateLead = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      if (existingLead.franchise.toString() !== req.user.franchiseOwned.toString()) {
+      // Franchise owners can update leads for agents under their franchise (and leads where they are the agent)
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(existingLead.agent.toString())) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only update leads from your franchise.',
+          error: 'Access denied. You can only update leads associated with your franchise agents.',
         });
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, existingLead.franchise);
+      const canAccess = existingLead.associatedModel === 'Franchise'
+        ? await regionalManagerCanAccessFranchise(req, existingLead.associated)
+        : true;
       if (!canAccess) {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You can only update leads from franchises associated with you.',
+        });
+      }
+    }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(existingLead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only update leads associated with your agents.',
         });
       }
     }
@@ -275,7 +419,7 @@ export const updateLead = async (req, res, next) => {
       runValidators: true,
     })
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile');
@@ -316,7 +460,7 @@ export const updateLead = async (req, res, next) => {
  */
 export const updateLeadStatus = async (req, res, next) => {
   try {
-    const { status, sanctionedAmount, sanctionedDate, disbursedAmount, disbursementType } = req.body;
+    const { status, sanctionedDate, disbursedAmount, disbursementType } = req.body;
 
     // Check access before updating
     const existingLead = await Lead.findById(req.params.id);
@@ -342,10 +486,14 @@ export const updateLeadStatus = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      if (existingLead.franchise.toString() !== req.user.franchiseOwned.toString()) {
+      // Franchise owners can update leads for agents under their franchise (and leads where they are the agent)
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(existingLead.agent.toString())) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only update leads from your franchise.',
+          error: 'Access denied. You can only update leads associated with your franchise agents.',
         });
       }
     }
@@ -358,11 +506,27 @@ export const updateLeadStatus = async (req, res, next) => {
         });
       }
     }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(existingLead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only update leads associated with your agents.',
+        });
+      }
+    }
 
     const updateData = { status };
     
-    if (sanctionedAmount !== undefined) {
-      updateData.sanctionedAmount = sanctionedAmount;
+    if (sanctionedDate !== undefined) {
       updateData.sanctionedDate = sanctionedDate || new Date();
     }
 
@@ -371,7 +535,7 @@ export const updateLeadStatus = async (req, res, next) => {
       const previousAmount = lead.disbursedAmount || 0;
       
       updateData.disbursedAmount = disbursedAmount;
-      updateData.disbursementType = disbursementType || (disbursedAmount === lead.sanctionedAmount ? 'full' : 'partial');
+      updateData.disbursementType = disbursementType || (disbursedAmount === lead.loanAmount ? 'full' : 'partial');
 
       // Add to disbursement history
       if (!lead.disbursementHistory) {
@@ -385,7 +549,7 @@ export const updateLeadStatus = async (req, res, next) => {
       updateData.disbursementHistory = lead.disbursementHistory;
 
       // If fully disbursed, mark as completed
-      if (disbursedAmount >= lead.sanctionedAmount) {
+      if (disbursedAmount >= (lead.loanAmount || 0)) {
         updateData.status = 'completed';
         updateData.disbursementType = 'full';
 
@@ -410,7 +574,7 @@ export const updateLeadStatus = async (req, res, next) => {
       { new: true, runValidators: true }
     )
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -474,10 +638,14 @@ export const verifyLead = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      if (existingLead.franchise.toString() !== req.user.franchiseOwned.toString()) {
+      // Franchise owners can verify leads for agents under their franchise (and leads where they are the agent)
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(existingLead.agent.toString())) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only verify leads from your franchise.',
+          error: 'Access denied. You can only verify leads associated with your franchise agents.',
         });
       }
     }
@@ -487,6 +655,23 @@ export const verifyLead = async (req, res, next) => {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You can only verify leads from franchises associated with you.',
+        });
+      }
+    }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(existingLead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only verify leads associated with your agents.',
         });
       }
     }
@@ -508,7 +693,7 @@ export const verifyLead = async (req, res, next) => {
       { new: true, runValidators: true }
     )
       .populate('agent', 'name email mobile')
-      .populate('franchise', 'name')
+      .populate('associated', 'name')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -630,11 +815,47 @@ export const deleteLead = async (req, res, next) => {
       });
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, lead.franchise);
+      const canAccess = lead.associatedModel === 'Franchise'
+        ? await regionalManagerCanAccessFranchise(req, lead.associated)
+        : true;
       if (!canAccess) {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You can only delete leads from franchises associated with you.',
+        });
+      }
+    }
+    if (req.user.role === 'franchise') {
+      if (!req.user.franchiseOwned) {
+        return res.status(400).json({
+          success: false,
+          message: 'Franchise owner does not have an associated franchise',
+        });
+      }
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(lead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only delete leads associated with your franchise agents.',
+        });
+      }
+    }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(lead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only delete leads associated with your agents.',
         });
       }
     }
@@ -681,19 +902,41 @@ export const getLeadHistory = async (req, res, next) => {
           message: 'Franchise owner does not have an associated franchise',
         });
       }
-      if (lead.franchise.toString() !== req.user.franchiseOwned.toString()) {
+      const agentIds = await User.find({ managedByModel: 'Franchise', managedBy: req.user.franchiseOwned }).distinct('_id');
+      const allowedAgentIds = (agentIds || []).map(String);
+      allowedAgentIds.push(req.user._id.toString());
+      if (!allowedAgentIds.includes(lead.agent.toString())) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only view history of leads from your franchise.',
+          error: 'Access denied. You can only view history of leads associated with your franchise agents.',
         });
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, lead.franchise);
+      const canAccess = lead.associatedModel === 'Franchise'
+        ? await regionalManagerCanAccessFranchise(req, lead.associated)
+        : true;
       if (!canAccess) {
         return res.status(403).json({
           success: false,
           error: 'Access denied. You can only view history of leads from franchises associated with you.',
+        });
+      }
+    }
+    if (req.user.role === 'relationship_manager') {
+      const RM = await import('../models/relationship.model.js').then(m => m.default).catch(() => null);
+      let rmId = req.user.relationshipManagerOwned;
+      if (!rmId && RM) {
+        const rmDoc = await RM.findOne({ owner: req.user._id }).select('_id');
+        if (rmDoc) rmId = rmDoc._id;
+      }
+      const agentIds = rmId ? await User.find({ managedByModel: 'RelationshipManager', managedBy: rmId }).distinct('_id') : [];
+      const allowedAgentIds = agentIds || [];
+      allowedAgentIds.push(req.user._id);
+      if (!allowedAgentIds.map(String).includes(lead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only view history of leads associated with your agents.',
         });
       }
     }

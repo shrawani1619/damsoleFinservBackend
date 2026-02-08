@@ -60,13 +60,29 @@ const userSchema = new mongoose.Schema(
     },
 
     // Role-specific fields
-    // For agents and franchise owners
+    // For franchise owners (kept for backward compatibility)
     franchise: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Franchise',
+      // franchise field is required for users with role 'franchise' (franchise owner)
       required: function () {
-        return ['agent', 'franchise'].includes(this.role);
+        return this.role === 'franchise';
       },
+    },
+
+    // Flexible owner for agents: can be a Franchise or a RelationshipManager.
+    // Uses dynamic ref via refPath.
+    managedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      refPath: 'managedByModel',
+      required: function () {
+        return this.role === 'agent';
+      },
+      index: true,
+    },
+    managedByModel: {
+      type: String,
+      enum: ['Franchise', 'RelationshipManager'],
     },
 
     // For franchise owners
@@ -76,6 +92,12 @@ const userSchema = new mongoose.Schema(
       required: function () {
         return this.role === 'franchise';
       },
+    },
+
+    // For relationship managers
+    relationshipManagerOwned: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'RelationshipManager',
     },
 
     // For agents
@@ -128,6 +150,7 @@ const userSchema = new mongoose.Schema(
 // Index for efficient queries
 userSchema.index({ role: 1, status: 1 });
 userSchema.index({ franchise: 1, role: 1 });
+userSchema.index({ managedBy: 1, role: 1 });
 
 // Compare password method (supports both plain text and bcrypt hashed passwords)
 userSchema.methods.comparePassword = async function (enteredPassword) {

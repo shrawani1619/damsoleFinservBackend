@@ -70,6 +70,7 @@ export const createFranchise = async (req, res, next) => {
       }
     }
 
+
     const franchisePayload = {
       name: name.trim(),
       ownerName: ownerName.trim(),
@@ -83,6 +84,7 @@ export const createFranchise = async (req, res, next) => {
     if (req.user.role === 'regional_manager') {
       franchisePayload.regionalManager = req.user._id;
     }
+    // relationship managers are not directly linked to franchises per new hierarchy
     const franchise = await Franchise.create(franchisePayload);
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -127,6 +129,13 @@ export const createFranchise = async (req, res, next) => {
  */
 export const getFranchises = async (req, res, next) => {
   try {
+    // Relationship managers should not have access to franchise listings
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     const { page = 1, limit = 10, status } = req.query;
     const skip = (page - 1) * limit;
 
@@ -157,11 +166,26 @@ export const getFranchises = async (req, res, next) => {
 };
 
 /**
- * Get Active Franchises (Public - for signup)
+ * Get Active Franchises (all when not authenticated; scoped by role when logged in)
  */
 export const getActiveFranchises = async (req, res, next) => {
   try {
-    const franchises = await Franchise.find({ status: 'active' })
+    // Relationship managers should not have access to franchise listings
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
+    const query = { status: 'active' };
+    if (req.user?.role === 'regional_manager') {
+      const franchiseIds = await getRegionalManagerFranchiseIds(req);
+      if (franchiseIds?.length) query._id = { $in: franchiseIds };
+      else query._id = null; // no franchises under this RM
+    } else if (req.user?.role === 'franchise' && req.user.franchiseOwned) {
+      query._id = req.user.franchiseOwned;
+    }
+    const franchises = await Franchise.find(query)
       .select('name _id')
       .sort({ name: 1 });
 
@@ -189,6 +213,13 @@ export const getFranchiseById = async (req, res, next) => {
         message: 'Franchise not found',
       });
     }
+    // Relationship managers should not be allowed to view franchise details
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       if (franchise.regionalManager?.toString() !== req.user._id.toString()) {
         return res.status(403).json({
@@ -212,6 +243,13 @@ export const getFranchiseById = async (req, res, next) => {
  */
 export const updateFranchise = async (req, res, next) => {
   try {
+    // Relationship managers should not be allowed to update franchises
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.params.id);
       if (!canAccess) {
@@ -238,6 +276,7 @@ export const updateFranchise = async (req, res, next) => {
         }
       }
     }
+    // relationship managers are not linked to franchises; ignore any relationshipManager updates
     const franchise = await Franchise.findByIdAndUpdate(req.params.id, updatePayload, {
       new: true,
       runValidators: true,
@@ -267,6 +306,13 @@ export const updateFranchise = async (req, res, next) => {
  */
 export const updateFranchiseStatus = async (req, res, next) => {
   try {
+    // Relationship managers should not be allowed to update franchise status
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.params.id);
       if (!canAccess) {
@@ -306,6 +352,13 @@ export const updateFranchiseStatus = async (req, res, next) => {
  */
 export const getFranchiseAgents = async (req, res, next) => {
   try {
+    // Relationship managers should not be allowed to view agents under a franchise
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.params.id);
       if (!canAccess) {
@@ -348,6 +401,13 @@ export const getFranchiseAgents = async (req, res, next) => {
  */
 export const getFranchisePerformance = async (req, res, next) => {
   try {
+    // Relationship managers should not be allowed to view franchise performance
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.params.id);
       if (!canAccess) {
@@ -414,6 +474,13 @@ export const getFranchisePerformance = async (req, res, next) => {
  */
 export const deleteFranchise = async (req, res, next) => {
   try {
+    // Relationship managers should not be allowed to delete franchises
+    if (req.user?.role === 'relationship_manager') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied.',
+      });
+    }
     if (req.user.role === 'regional_manager') {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.params.id);
       if (!canAccess) {

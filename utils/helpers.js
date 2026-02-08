@@ -222,7 +222,6 @@ export function trackLeadChanges(oldData, newData, fieldsToCheck = null) {
     'franchise',
     'bank',
     'status',
-    'sanctionedAmount',
     'sanctionedDate',
     'disbursedAmount',
     'disbursementDate',

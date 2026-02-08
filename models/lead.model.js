@@ -39,11 +39,18 @@ const leadSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    
+    // (No direct franchise field — use polymorphic `associated` + `associatedModel`)
 
-    franchise: {
+    // Polymorphic association: can be a Franchise or a RelationshipManager
+    associated: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Franchise',
-      required: true,
+      refPath: 'associatedModel',
+      index: true,
+    },
+    associatedModel: {
+      type: String,
+      enum: ['Franchise', 'RelationshipManager'],
       index: true,
     },
 
@@ -70,7 +77,6 @@ const leadSchema = new mongoose.Schema(
     },
 
     // Sanction and disbursement details
-    sanctionedAmount: Number,
     sanctionedDate: Date,
 
     disbursedAmount: {
@@ -166,7 +172,8 @@ const leadSchema = new mongoose.Schema(
 
 // Indexes for efficient queries
 leadSchema.index({ agent: 1, status: 1 });
-leadSchema.index({ franchise: 1, status: 1 });
+leadSchema.index({ associated: 1, status: 1 });
+leadSchema.index({ associatedModel: 1, status: 1 });
 leadSchema.index({ bank: 1, status: 1 });
 leadSchema.index({ verificationStatus: 1 });
 

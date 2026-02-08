@@ -1,6 +1,7 @@
 import invoiceService from '../services/invoice.service.js';
 import { getPaginationMeta } from '../utils/helpers.js';
 import Invoice from '../models/invoice.model.js';
+import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } from '../utils/regionalScope.js';
 
 /**
  * Get all invoices
@@ -24,11 +25,23 @@ export const getInvoices = async (req, res, next) => {
         });
       }
       query.franchise = req.user.franchiseOwned;
+    } else if (req.user.role === 'regional_manager') {
+      const franchiseIds = await getRegionalManagerFranchiseIds(req);
+      if (!franchiseIds?.length) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      query.franchise = franchiseId && franchiseIds.some((fid) => fid.toString() === franchiseId)
+        ? franchiseId
+        : { $in: franchiseIds };
     }
 
     if (status) query.status = status;
     if (agentId) query.agent = agentId;
-    if (franchiseId) query.franchise = franchiseId;
+    if (franchiseId && req.user.role !== 'regional_manager') query.franchise = franchiseId;
 
     const invoices = await Invoice.find(query)
       .populate('agent', 'name email')
@@ -87,6 +100,15 @@ export const getInvoiceById = async (req, res, next) => {
         });
       }
     }
+    if (req.user.role === 'regional_manager') {
+      const canAccess = await regionalManagerCanAccessFranchise(req, invoice.franchise);
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only view invoices from franchises associated with you.',
+        });
+      }
+    }
 
     res.status(200).json({
       success: true,
@@ -102,6 +124,12 @@ export const getInvoiceById = async (req, res, next) => {
  */
 export const acceptInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const { remarks } = req.body;
     const invoice = await invoiceService.acceptInvoice(req.params.id, remarks);
 
@@ -120,6 +148,12 @@ export const acceptInvoice = async (req, res, next) => {
  */
 export const escalateInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const { reason, remarks } = req.body;
 
     if (!reason) {
@@ -151,6 +185,12 @@ export const escalateInvoice = async (req, res, next) => {
  */
 export const resolveEscalation = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const { resolutionRemarks, adjustments } = req.body;
 
     if (!resolutionRemarks) {
@@ -182,6 +222,12 @@ export const resolveEscalation = async (req, res, next) => {
  */
 export const approveInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const invoice = await invoiceService.approveInvoice(req.params.id, req.user._id);
 
     res.status(200).json({
@@ -199,6 +245,12 @@ export const approveInvoice = async (req, res, next) => {
  */
 export const rejectInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const { rejectionReason } = req.body;
 
     if (!rejectionReason) {
@@ -229,6 +281,15 @@ export const rejectInvoice = async (req, res, next) => {
  */
 export const createInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager' && req.body.franchise) {
+      const canAccess = await regionalManagerCanAccessFranchise(req, req.body.franchise);
+      if (!canAccess) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only create invoices for franchises associated with you.',
+        });
+      }
+    }
     const invoice = await Invoice.create(req.body);
 
     const populatedInvoice = await Invoice.findById(invoice._id)
@@ -251,6 +312,15 @@ export const createInvoice = async (req, res, next) => {
  */
 export const updateInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const existing = await Invoice.findById(req.params.id).select('franchise');
+      if (existing && !(await regionalManagerCanAccessFranchise(req, existing.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+      if (req.body.franchise && !(await regionalManagerCanAccessFranchise(req, req.body.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const invoice = await Invoice.findByIdAndUpdate(req.params.id, req.body, {
       new: true,
       runValidators: true,
@@ -281,6 +351,12 @@ export const updateInvoice = async (req, res, next) => {
  */
 export const deleteInvoice = async (req, res, next) => {
   try {
+    if (req.user.role === 'regional_manager') {
+      const inv = await Invoice.findById(req.params.id).select('franchise');
+      if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {
+        return res.status(403).json({ success: false, error: 'Access denied.' });
+      }
+    }
     const invoice = await Invoice.findByIdAndDelete(req.params.id);
 
     if (!invoice) {

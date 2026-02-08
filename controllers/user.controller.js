@@ -1,5 +1,6 @@
 import User from '../models/user.model.js';
 import Franchise from '../models/franchise.model.js';
+import RelationshipManager from '../models/relationship.model.js';
 import { getPaginationMeta } from '../utils/helpers.js';
 import auditService from '../services/audit.service.js';
 import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } from '../utils/regionalScope.js';
@@ -19,14 +20,21 @@ export const getUsers = async (req, res, next) => {
       query.role = 'agent';
     }
     if (req.user.role === 'regional_manager') {
-      const franchiseIds = await getRegionalManagerFranchiseIds(req);
-      if (franchiseIds === null || franchiseIds.length === 0) {
-        query._id = null;
+      if (role === 'relationship_manager') {
+        const rmOwnerIds = await RelationshipManager.find({ regionalManager: req.user._id }).distinct('owner');
+        query.role = 'relationship_manager';
+        if (!rmOwnerIds.length) query._id = null;
+        else query._id = { $in: rmOwnerIds };
       } else {
-        query.$or = [
-          { role: 'franchise', franchiseOwned: { $in: franchiseIds } },
-          { role: 'agent', franchise: { $in: franchiseIds } },
-        ];
+        const franchiseIds = await getRegionalManagerFranchiseIds(req);
+        if (franchiseIds === null || franchiseIds.length === 0) {
+          query._id = null;
+        } else {
+          query.$or = [
+            { role: 'franchise', franchiseOwned: { $in: franchiseIds } },
+            { role: 'agent', franchise: { $in: franchiseIds } },
+          ];
+        }
       }
     }
 
@@ -70,17 +78,23 @@ export const getUserById = async (req, res, next) => {
       });
     }
     if (req.user.role === 'regional_manager') {
-      const franchiseIds = await getRegionalManagerFranchiseIds(req);
-      if (franchiseIds !== null && franchiseIds.length > 0) {
-        const inScope =
-          (user.role === 'franchise' && user.franchiseOwned && franchiseIds.some((fid) => fid.toString() === user.franchiseOwned.toString())) ||
-          (user.role === 'agent' && user.franchise && franchiseIds.some((fid) => fid.toString() === user.franchise.toString()));
-        if (!inScope) {
-          return res.status(403).json({
-            success: false,
-            message: 'Access denied. You can only view users from franchises associated with you.',
-          });
+      let inScope = false;
+      if (user.role === 'relationship_manager') {
+        const rm = await RelationshipManager.findOne({ owner: user._id, regionalManager: req.user._id });
+        inScope = !!rm;
+      } else {
+        const franchiseIds = await getRegionalManagerFranchiseIds(req);
+        if (franchiseIds !== null && franchiseIds.length > 0) {
+          inScope =
+            (user.role === 'franchise' && user.franchiseOwned && franchiseIds.some((fid) => fid.toString() === user.franchiseOwned.toString())) ||
+            (user.role === 'agent' && user.franchise && franchiseIds.some((fid) => fid.toString() === user.franchise.toString()));
         }
+      }
+      if (!inScope) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only view users associated with you.',
+        });
       }
     }
 

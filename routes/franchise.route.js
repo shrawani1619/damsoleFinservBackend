@@ -10,13 +10,13 @@ import {
   getActiveFranchises,
   deleteFranchise,
 } from '../controllers/franchise.controller.js';
-import { authenticate } from '../middlewares/auth.middleware.js';
+import { authenticate, optionalAuthenticate } from '../middlewares/auth.middleware.js';
 import { requireRole } from '../middlewares/role.middleware.js';
 
 const franchiseRouter = Router();
 
-// Public route - Get active franchises for signup
-franchiseRouter.get('/active', getActiveFranchises);
+// Get active franchises (public list when not logged in; scoped by role when authenticated)
+franchiseRouter.get('/active', optionalAuthenticate, getActiveFranchises);
 
 // All other routes require authentication
 franchiseRouter.use(authenticate);

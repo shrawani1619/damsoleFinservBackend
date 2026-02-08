@@ -48,10 +48,10 @@ class ReportService {
         'Loan Type': lead.loanType,
         'Loan Amount': formatCurrency(lead.loanAmount),
         'Agent': lead.agent?.name || 'N/A',
-        'Franchise': lead.franchise?.name || 'N/A',
+        'Associated': lead.associated?.name || lead.franchise?.name || 'N/A',
         'Bank': lead.bank?.name || 'N/A',
         'Status': lead.status,
-        'Sanctioned Amount': lead.sanctionedAmount ? formatCurrency(lead.sanctionedAmount) : 'N/A',
+        // 'Sanctioned Amount' removed
         'Disbursed Amount': formatCurrency(lead.disbursedAmount),
         'Commission Amount': lead.actualCommission ? formatCurrency(lead.actualCommission) : 'N/A',
         'Created Date': formatDate(lead.createdAt),
