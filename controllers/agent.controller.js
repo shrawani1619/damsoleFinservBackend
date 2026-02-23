@@ -1,5 +1,5 @@
 import User from '../models/user.model.js';
-import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } from '../utils/regionalScope.js';
+import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise, getRegionalManagerRelationshipManagerIds, regionalManagerCanAccessRelationshipManager } from '../utils/regionalScope.js';
 
 /**
  * Create Agent
@@ -88,7 +88,15 @@ export const getAgents = async (req, res, next) => {
     const query = { role: 'agent' };
 
     // Role-based filtering
-    if (req.user.role === 'franchise') {
+    if (req.user.role === 'accounts_manager') {
+      // Accountant can only see agents under assigned Regional Managers
+      const { getAccountantAccessibleAgentIds } = await import('../utils/accountantScope.js');
+      const accessibleAgentIds = await getAccountantAccessibleAgentIds(req);
+      if (accessibleAgentIds.length === 0) {
+        return res.status(200).json({ success: true, data: [] });
+      }
+      query._id = { $in: accessibleAgentIds };
+    } else if (req.user.role === 'franchise') {
       if (!req.user.franchiseOwned) {
         return res.status(400).json({
           success: false,
@@ -213,11 +221,17 @@ export const getAgentById = async (req, res, next) => {
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, agent.managedBy);
+      // Check if agent is under a franchise or relationship manager that belongs to this regional manager
+      let canAccess = false;
+      if (agent.managedByModel === 'Franchise') {
+        canAccess = await regionalManagerCanAccessFranchise(req, agent.managedBy);
+      } else if (agent.managedByModel === 'RelationshipManager') {
+        canAccess = await regionalManagerCanAccessRelationshipManager(req, agent.managedBy);
+      }
       if (!canAccess) {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only view agents from franchises associated with you.',
+          error: 'Access denied. You can only view agents from your hierarchy.',
         });
       }
     }
@@ -276,11 +290,27 @@ export const updateAgent = async (req, res, next) => {
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, existingAgent.managedBy);
-      if (!canAccess) {
+      // Check if agent is under a franchise or relationship manager that belongs to this regional manager
+      if (existingAgent.managedByModel === 'Franchise') {
+        const canAccess = await regionalManagerCanAccessFranchise(req, existingAgent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only update agents from franchises associated with you.',
+          });
+        }
+      } else if (existingAgent.managedByModel === 'RelationshipManager') {
+        const canAccess = await regionalManagerCanAccessRelationshipManager(req, existingAgent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only update agents from relationship managers associated with you.',
+          });
+        }
+      } else {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only update agents from franchises associated with you.',
+          error: 'Access denied. Agent must be associated with a franchise or relationship manager.',
         });
       }
     }
@@ -338,11 +368,27 @@ export const updateAgentStatus = async (req, res, next) => {
       }
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, existingAgent.managedBy);
-      if (!canAccess) {
+      // Check if agent is under a franchise or relationship manager that belongs to this regional manager
+      if (existingAgent.managedByModel === 'Franchise') {
+        const canAccess = await regionalManagerCanAccessFranchise(req, existingAgent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only update agents from franchises associated with you.',
+          });
+        }
+      } else if (existingAgent.managedByModel === 'RelationshipManager') {
+        const canAccess = await regionalManagerCanAccessRelationshipManager(req, existingAgent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only update agents from relationship managers associated with you.',
+          });
+        }
+      } else {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only update agents from franchises associated with you.',
+          error: 'Access denied. Agent must be associated with a franchise or relationship manager.',
         });
       }
     }
@@ -390,11 +436,27 @@ export const deleteAgent = async (req, res, next) => {
       });
     }
     if (req.user.role === 'regional_manager') {
-      const canAccess = await regionalManagerCanAccessFranchise(req, agent.franchise);
-      if (!canAccess) {
+      // Check if agent is under a franchise or relationship manager that belongs to this regional manager
+      if (agent.managedByModel === 'Franchise') {
+        const canAccess = await regionalManagerCanAccessFranchise(req, agent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only delete agents from franchises associated with you.',
+          });
+        }
+      } else if (agent.managedByModel === 'RelationshipManager') {
+        const canAccess = await regionalManagerCanAccessRelationshipManager(req, agent.managedBy);
+        if (!canAccess) {
+          return res.status(403).json({
+            success: false,
+            error: 'Access denied. You can only delete agents from relationship managers associated with you.',
+          });
+        }
+      } else {
         return res.status(403).json({
           success: false,
-          error: 'Access denied. You can only delete agents from franchises associated with you.',
+          error: 'Access denied. Agent must be associated with a franchise or relationship manager.',
         });
       }
     }
@@ -412,6 +474,12 @@ export const deleteAgent = async (req, res, next) => {
         });
       }
     }
+    
+    // Log deletion to audit log
+    const agentData = agent.toObject();
+    const auditService = (await import('../services/audit.service.js')).default;
+    await auditService.logDelete(req.user._id, 'User', req.params.id, agentData, req);
+    
     await User.findOneAndDelete({ _id: req.params.id, role: 'agent' });
 
     res.status(200).json({

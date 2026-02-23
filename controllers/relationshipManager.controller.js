@@ -5,6 +5,7 @@ import Lead from '../models/lead.model.js';
 import Invoice from '../models/invoice.model.js';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import auditService from '../services/audit.service.js';
 import { getPaginationMeta } from '../utils/helpers.js';
 
 /**
@@ -132,7 +133,19 @@ export const getRelationshipManagers = async (req, res, next) => {
 
     const query = {};
     if (status) query.status = status;
-    if (req.user.role === 'regional_manager') {
+    if (req.user.role === 'accounts_manager') {
+      // Accountant can only see relationship managers under assigned Regional Managers
+      const { getAccountantAccessibleRelationshipManagerIds } = await import('../utils/accountantScope.js');
+      const accessibleRMIds = await getAccountantAccessibleRelationshipManagerIds(req);
+      if (accessibleRMIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      query.owner = { $in: accessibleRMIds };
+    } else if (req.user.role === 'regional_manager') {
       query.regionalManager = req.user._id;
     }
 
@@ -194,6 +207,25 @@ export const getRelationshipManagerById = async (req, res, next) => {
  */
 export const updateRelationshipManager = async (req, res, next) => {
   try {
+    // Check if relationship manager exists
+    const existingRM = await RelationshipManager.findById(req.params.id);
+    if (!existingRM) {
+      return res.status(404).json({
+        success: false,
+        message: 'Relationship manager not found',
+      });
+    }
+
+    // Regional Manager can only edit relationship managers under them
+    if (req.user.role === 'regional_manager') {
+      if (existingRM.regionalManager?.toString() !== req.user._id.toString()) {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You can only update relationship managers associated with you.',
+        });
+      }
+    }
+
     const updatePayload = { ...req.body };
     if (req.user.role !== 'super_admin') {
       delete updatePayload.regionalManager;
@@ -373,7 +405,7 @@ export const getRelationshipManagerPerformance = async (req, res, next) => {
  */
 export const deleteRelationshipManager = async (req, res, next) => {
   try {
-    const relationshipManager = await RelationshipManager.findByIdAndDelete(req.params.id);
+    const relationshipManager = await RelationshipManager.findById(req.params.id);
 
     if (!relationshipManager) {
       return res.status(404).json({
@@ -381,6 +413,12 @@ export const deleteRelationshipManager = async (req, res, next) => {
         message: 'Relationship manager not found',
       });
     }
+    
+    // Log deletion to audit log
+    const rmData = relationshipManager.toObject();
+    await auditService.logDelete(req.user._id, 'RelationshipManager', req.params.id, rmData, req);
+    
+    await RelationshipManager.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,

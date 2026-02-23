@@ -21,7 +21,7 @@ const leadHistorySchema = new mongoose.Schema(
 
     action: {
       type: String,
-      enum: ['created', 'updated', 'status_changed', 'verified'],
+      enum: ['created', 'updated', 'status_changed', 'verified', 'email_sent', 'email_sent_failed'],
       required: true,
     },
 

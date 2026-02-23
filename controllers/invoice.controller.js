@@ -277,10 +277,78 @@ export const rejectInvoice = async (req, res, next) => {
 };
 
 /**
- * Create Invoice
+ * Generate Invoice from Lead
+ */
+export const generateInvoiceFromLead = async (req, res, next) => {
+  try {
+    // Only Admin and Accountant can generate invoices
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can generate invoices.',
+      });
+    }
+
+    const { leadId } = req.params;
+
+    // Check if accountant can access this lead
+    if (req.user.role === 'accounts_manager') {
+      const { getAccountantAccessibleAgentIds } = await import('../utils/accountantScope.js');
+      const accessibleAgentIds = await getAccountantAccessibleAgentIds(req);
+      if (accessibleAgentIds.length === 0) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. No assigned Regional Managers.',
+        });
+      }
+
+      const Lead = (await import('../models/lead.model.js')).default;
+      const lead = await Lead.findById(leadId).select('agent');
+      if (!lead) {
+        return res.status(404).json({
+          success: false,
+          error: 'Lead not found',
+        });
+      }
+
+      if (!accessibleAgentIds.includes(lead.agent.toString())) {
+        return res.status(403).json({
+          success: false,
+          error: 'Access denied. You can only generate invoices for leads under your assigned Regional Managers.',
+        });
+      }
+    }
+
+    const invoice = await invoiceService.generateInvoice(leadId);
+
+    const populatedInvoice = await Invoice.findById(invoice._id)
+      .populate('lead', 'loanAccountNo loanType customerName')
+      .populate('agent', 'name email')
+      .populate('franchise', 'name');
+
+    res.status(201).json({
+      success: true,
+      message: 'Invoice generated successfully',
+      data: populatedInvoice,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Create Invoice (Manual creation - Admin only)
  */
 export const createInvoice = async (req, res, next) => {
   try {
+    // Only Admin can manually create invoices
+    if (req.user.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin can manually create invoices. Accountants should generate invoices from leads.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager' && req.body.franchise) {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.body.franchise);
       if (!canAccess) {
@@ -312,6 +380,14 @@ export const createInvoice = async (req, res, next) => {
  */
 export const updateInvoice = async (req, res, next) => {
   try {
+    // Only Admin and Accountant can edit invoices
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can edit invoices.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager') {
       const existing = await Invoice.findById(req.params.id).select('franchise');
       if (existing && !(await regionalManagerCanAccessFranchise(req, existing.franchise))) {
@@ -351,6 +427,14 @@ export const updateInvoice = async (req, res, next) => {
  */
 export const deleteInvoice = async (req, res, next) => {
   try {
+    // Only Admin and Accountant can delete invoices
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can delete invoices.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager') {
       const inv = await Invoice.findById(req.params.id).select('franchise');
       if (inv && !(await regionalManagerCanAccessFranchise(req, inv.franchise))) {

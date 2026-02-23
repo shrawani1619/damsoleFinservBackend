@@ -339,3 +339,51 @@ export const activateUser = async (req, res, next) => {
     next(error);
   }
 };
+
+/**
+ * Delete user
+ */
+export const deleteUser = async (req, res, next) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    if (req.user.role === 'regional_manager') {
+      const franchiseIds = await getRegionalManagerFranchiseIds(req);
+      if (franchiseIds !== null && franchiseIds.length > 0) {
+        const inScope =
+          (user.role === 'franchise' && user.franchiseOwned && franchiseIds.some((fid) => fid.toString() === user.franchiseOwned.toString())) ||
+          (user.role === 'agent' && user.franchise && franchiseIds.some((fid) => fid.toString() === user.franchise.toString()));
+        if (!inScope) {
+          return res.status(403).json({
+            success: false,
+            message: 'Access denied. You can only delete users from franchises associated with you.',
+          });
+        }
+      } else {
+        return res.status(403).json({
+          success: false,
+          message: 'Access denied. You have no franchises assigned.',
+        });
+      }
+    }
+
+    const previousValues = user.toObject();
+    await User.findByIdAndDelete(req.params.id);
+
+    // Log audit
+    await auditService.logDelete(req.user._id, 'user', req.params.id, previousValues, req);
+
+    res.status(200).json({
+      success: true,
+      message: 'User deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};

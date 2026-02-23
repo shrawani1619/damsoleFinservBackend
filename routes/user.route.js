@@ -6,6 +6,7 @@ import {
   updateUser,
   transferAgent,
   activateUser,
+  deleteUser,
 } from '../controllers/user.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { requireRole } from '../middlewares/role.middleware.js';
@@ -32,5 +33,8 @@ userRouter.put('/:id/transfer', requireRole('super_admin', 'regional_manager'), 
 
 // Activate/deactivate user (Admin/Manager)
 userRouter.post('/:id/activate', requireRole('super_admin', 'regional_manager'), activateUser);
+
+// Delete user (Admin/Manager)
+userRouter.delete('/:id', requireRole('super_admin', 'regional_manager'), deleteUser);
 
 export default userRouter;

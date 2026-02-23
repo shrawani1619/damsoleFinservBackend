@@ -13,7 +13,18 @@ function errorHandler(err, req, res, next) {
 
         //Mongoose duplicate key
         if(err.code === 11000){
-            const message = 'Duplicate field value entered'
+            let message = 'Duplicate field value entered'
+            // Extract which field is duplicate from err.keyValue
+            if(err.keyValue){
+                const duplicateFields = Object.keys(err.keyValue)
+                if(duplicateFields.length > 0){
+                    const fieldName = duplicateFields[0]
+                    const fieldValue = err.keyValue[fieldName]
+                    // Capitalize first letter and make it user-friendly
+                    const friendlyFieldName = fieldName.charAt(0).toUpperCase() + fieldName.slice(1)
+                    message = `${friendlyFieldName} "${fieldValue}" already exists. Please use a different ${fieldName}.`
+                }
+            }
             error = new Error(message)
             error.statusCode = 400;
         }

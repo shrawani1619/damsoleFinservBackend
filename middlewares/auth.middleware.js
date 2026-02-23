@@ -48,6 +48,9 @@ export const authenticate = async (req, res, next) => {
 
       // Attach full user object to request
       req.user = user;
+      
+      // Debug log for role verification
+      console.log(`User ${user.email} authenticated with role: ${user.role}`);
 
       next();
     } catch (error) {

@@ -12,27 +12,27 @@ const leadSchema = new mongoose.Schema(
     // Applicant details
     applicantMobile: {
       type: String,
-      index: true,   
+      index: true,
     },
 
     applicantEmail: String,
 
     // Loan details
+    // loanType is optional for dynamic/custom forms; keep enum for normalization when present
     loanType: {
       type: String,
       enum: ['personal_loan', 'home_loan', 'business_loan',
-         'loan_against_property', 'education_loan', 'car_loan', 'gold_loan'],
-      required: true,
+        'loan_against_property', 'education_loan', 'car_loan', 'gold_loan'],
     },
 
+    // loanAmount is optional for dynamic/custom forms
     loanAmount: {
       type: Number,
-      required: true,
     },
-    
+
+    // loanAccountNo is optional for dynamic/custom forms
     loanAccountNo: {
       type: String,
-      required: true,
       index: true,
     },
 
@@ -43,7 +43,12 @@ const leadSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-    
+
+    agentName: {
+      type: String,
+      trim: true,
+    },
+
     // (No direct franchise field — use polymorphic `associated` + `associatedModel`)
 
     // Polymorphic association: can be a Franchise or a RelationshipManager
@@ -58,10 +63,18 @@ const leadSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Bank is optional at schema level; client-side flow should set bank when using bank-specific forms.
     bank: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Bank',
-      required: true,
+      index: true,
+    },
+
+    // Lead type: 'bank' = bank-specific form, 'new_lead' = generic lead (bank can be added later by RM)
+    leadType: {
+      type: String,
+      enum: ['bank', 'new_lead'],
+      default: 'bank',
       index: true,
     },
 
@@ -104,6 +117,11 @@ const leadSchema = new mongoose.Schema(
           type: String,
           enum: ['full', 'partial'],
         },
+        utr: String,
+        bankRef: String,
+        commission: Number,
+        gst: Number,
+        netCommission: Number,
         remarks: String,
       },
     ],
@@ -115,6 +133,11 @@ const leadSchema = new mongoose.Schema(
     },
 
     commissionPercentage: {
+      type: Number,
+      default: 0,
+    },
+
+    commissionAmount: {
       type: Number,
       default: 0,
     },
@@ -153,13 +176,13 @@ const leadSchema = new mongoose.Schema(
     bankResponseReceivedAt: Date,
 
     // Customer Details Form
+    // Customer name is optional for dynamic/custom forms; prefer storing in `formValues`
     customerName: {
       type: String,
-      required: true,
       trim: true,
       index: true,
     },
-    
+
     // SM/BM can be either a Staff (login-able) or a BankManager (contact-only).
     // Use polymorphic ref to support both.
     smBm: {
@@ -178,11 +201,37 @@ const leadSchema = new mongoose.Schema(
     asmName: String,
     asmEmail: String,
     asmMobile: String,
-    
+
     dsaCode: String,
     branch: String,
+
+    // Dynamic lead form reference (optional) and values submitted against that form
+    leadForm: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'LeadForm',
+      index: true,
+    },
+    // Generic container for custom form data. Use Mixed to allow arbitrary shapes.
+    formValues: {
+      type: mongoose.Schema.Types.Mixed,
+    },
+
+    // Documents submitted with lead when using dynamic forms (array of { documentType, url, uploadedBy, uploadedAt })
+    documents: [
+      {
+        documentType: String,
+        url: String,
+        uploadedBy: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+        uploadedAt: Date,
+      },
+    ],
   },
-  { timestamps: true }
+  // Allow storing arbitrary fields for custom lead forms (they'll be stored in `formValues`).
+  // Keep timestamps.
+  { timestamps: true, strict: false }
 );
 
 // Indexes for efficient queries

@@ -10,6 +10,7 @@ import {
   createInvoice,
   updateInvoice,
   deleteInvoice,
+  generateInvoiceFromLead,
 } from '../controllers/invoice.controller.js';
 import { authenticate } from '../middlewares/auth.middleware.js';
 import { requireRole } from '../middlewares/role.middleware.js';
@@ -20,11 +21,12 @@ const invoiceRouter = Router();
 invoiceRouter.use(authenticate);
 
 // CRUD operations
-invoiceRouter.post('/', requireRole('super_admin', 'relationship_manager'), createInvoice);
+invoiceRouter.post('/', requireRole('super_admin'), createInvoice); // Only admin can manually create
+invoiceRouter.post('/generate/:leadId', requireRole('super_admin', 'accounts_manager'), generateInvoiceFromLead); // Generate from lead
 invoiceRouter.get('/', getInvoices);
 invoiceRouter.get('/:id', getInvoiceById);
-invoiceRouter.put('/:id', requireRole('super_admin', 'relationship_manager'), updateInvoice);
-invoiceRouter.delete('/:id', requireRole('super_admin', 'relationship_manager'), deleteInvoice);
+invoiceRouter.put('/:id', requireRole('super_admin', 'accounts_manager'), updateInvoice);
+invoiceRouter.delete('/:id', requireRole('super_admin'), deleteInvoice);
 
 // Agent actions
 invoiceRouter.post('/:id/accept', requireRole('agent'), acceptInvoice);

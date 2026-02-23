@@ -15,6 +15,7 @@ export function requireRole(...roles) {
       }
 
       if (!roles.includes(req.user.role)) {
+        console.log(`Role check failed: User has role '${req.user.role}', but required roles are: [${roles.join(', ')}]`);
         return res.status(403).json({
           success: false,
           message: 'Insufficient permissions',

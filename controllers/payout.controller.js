@@ -231,6 +231,14 @@ export const confirmPayment = async (req, res, next) => {
  */
 export const createPayout = async (req, res, next) => {
   try {
+    // Only Admin and Accountant can create payouts
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can create payouts.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager' && req.body.franchise) {
       const canAccess = await regionalManagerCanAccessFranchise(req, req.body.franchise);
       if (!canAccess) {
@@ -285,6 +293,14 @@ export const createPayout = async (req, res, next) => {
  */
 export const updatePayout = async (req, res, next) => {
   try {
+    // Only Admin and Accountant can edit payouts
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can edit payouts.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager') {
       const existing = await Payout.findById(req.params.id).select('franchise');
       if (existing && !(await regionalManagerCanAccessFranchise(req, existing.franchise))) {
@@ -324,6 +340,14 @@ export const updatePayout = async (req, res, next) => {
  */
 export const deletePayout = async (req, res, next) => {
   try {
+    // Only Admin and Accountant can delete payouts
+    if (req.user.role !== 'super_admin' && req.user.role !== 'accounts_manager') {
+      return res.status(403).json({
+        success: false,
+        error: 'Access denied. Only Admin and Accountant can delete payouts.',
+      });
+    }
+    
     if (req.user.role === 'regional_manager') {
       const p = await Payout.findById(req.params.id).select('franchise');
       if (p && !(await regionalManagerCanAccessFranchise(req, p.franchise))) {

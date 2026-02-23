@@ -164,33 +164,33 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
 
     const commissionAggregation = franchiseIds.length
       ? await Invoice.aggregate([
-          { $match: { franchise: { $in: franchiseObjectIds } } },
-          { $group: { _id: null, total: { $sum: '$commissionAmount' } } },
-        ])
+        { $match: { franchise: { $in: franchiseObjectIds } } },
+        { $group: { _id: null, total: { $sum: '$commissionAmount' } } },
+      ])
       : [];
     const totalCommission = commissionAggregation[0]?.total || 0;
 
     const payoutAggregation = franchiseIds.length
       ? await Payout.aggregate([
-          { $match: { franchise: { $in: franchiseObjectIds }, status: 'paid' } },
-          { $group: { _id: null, total: { $sum: '$netPayable' } } },
-        ])
+        { $match: { franchise: { $in: franchiseObjectIds }, status: 'paid' } },
+        { $group: { _id: null, total: { $sum: '$netPayable' } } },
+      ])
       : [];
     const totalPayouts = payoutAggregation[0]?.total || 0;
 
     const leadStatusBreakdown = franchiseIds.length
       ? await Lead.aggregate([
-          { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' } },
-          { $group: { _id: '$status', count: { $sum: 1 } } },
-        ])
+        { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' } },
+        { $group: { _id: '$status', count: { $sum: 1 } } },
+      ])
       : [];
 
     const loanDistributionAgg = franchiseIds.length
       ? await Lead.aggregate([
-          { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' } },
-          { $group: { _id: '$loanType', count: { $sum: 1 } } },
-          { $sort: { count: -1 } },
-        ])
+        { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' } },
+        { $group: { _id: '$loanType', count: { $sum: 1 } } },
+        { $sort: { count: -1 } },
+      ])
       : [];
     const totalForLoan = loanDistributionAgg.reduce((s, i) => s + i.count, 0) || 1;
     const loanTypeLabels = {
@@ -223,10 +223,10 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
       : 0;
     const disbursedCount = franchiseIds.length
       ? await Lead.countDocuments({
-          associated: { $in: franchiseObjectIds },
-          associatedModel: 'Franchise',
-          status: { $in: ['partial_disbursed', 'disbursed'] },
-        })
+        associated: { $in: franchiseObjectIds },
+        associatedModel: 'Franchise',
+        status: { $in: ['partial_disbursed', 'disbursed'] },
+      })
       : 0;
     const completedCount = franchiseIds.length
       ? await Lead.countDocuments({ associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise', status: 'completed' })
@@ -244,57 +244,57 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
 
     const recentLeads = franchiseIds.length
       ? await Lead.find({ /* franchise-scoped: leads are linked via `associated` */ associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' })
-          .populate('agent', 'name email')
-          .populate('associated', 'name')
-          .populate('bank', 'name')
-          .sort({ createdAt: -1 })
-          .limit(5)
+        .populate('agent', 'name email')
+        .populate('associated', 'name')
+        .populate('bank', 'name')
+        .sort({ createdAt: -1 })
+        .limit(5)
       : [];
 
     const recentAgents = franchiseIds.length
       ? await User.find({ role: 'agent', franchise: { $in: franchiseObjectIds } })
-          .select('name email mobile status createdAt')
-          .populate('franchise', 'name')
-          .sort({ createdAt: -1 })
-          .limit(5)
+        .select('name email mobile status createdAt')
+        .populate('franchise', 'name')
+        .sort({ createdAt: -1 })
+        .limit(5)
       : [];
 
     const recentFranchises = [];
 
     const recentInvoices = franchiseIds.length
       ? await Invoice.find({ franchise: { $in: franchiseObjectIds } })
-          .populate('agent', 'name email')
-          .populate('franchise', 'name')
-          .select('invoiceNumber amount commissionAmount status createdAt')
-          .sort({ createdAt: -1 })
-          .limit(5)
+        .populate('agent', 'name email')
+        .populate('franchise', 'name')
+        .select('invoiceNumber amount commissionAmount status createdAt')
+        .sort({ createdAt: -1 })
+        .limit(5)
       : [];
 
     const recentPayouts = franchiseIds.length
       ? await Payout.find({ franchise: { $in: franchiseObjectIds } })
-          .populate('agent', 'name email')
-          .populate('franchise', 'name')
-          .select('payoutNumber netPayable status createdAt')
-          .sort({ createdAt: -1 })
-          .limit(5)
+        .populate('agent', 'name email')
+        .populate('franchise', 'name')
+        .select('payoutNumber netPayable status createdAt')
+        .sort({ createdAt: -1 })
+        .limit(5)
       : [];
 
     const sevenMonthsAgo = new Date();
     sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
     const visitorData = franchiseIds.length
       ? await Lead.aggregate([
-          { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise', createdAt: { $gte: sevenMonthsAgo } } },
-          {
-            $group: {
-              _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
-              visitors: { $sum: 1 },
-              leads: { $sum: 1 },
-              conversions: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
-            },
+        { $match: { associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise', createdAt: { $gte: sevenMonthsAgo } } },
+        {
+          $group: {
+            _id: { year: { $year: '$createdAt' }, month: { $month: '$createdAt' } },
+            visitors: { $sum: 1 },
+            leads: { $sum: 1 },
+            conversions: { $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] } },
           },
-          { $sort: { '_id.year': 1, '_id.month': 1 } },
-          { $limit: 7 },
-        ])
+        },
+        { $sort: { '_id.year': 1, '_id.month': 1 } },
+        { $limit: 7 },
+      ])
       : [];
     const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
     const formattedVisitorData = visitorData.map((item) => ({
@@ -324,9 +324,9 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
     previousPeriodStart.setMonth(previousPeriodStart.getMonth() - 7);
     const prevMatch = franchiseIds.length
       ? {
-          franchise: { $in: franchiseObjectIds },
-          createdAt: { $gte: previousPeriodStart, $lt: sevenMonthsAgo },
-        }
+        franchise: { $in: franchiseObjectIds },
+        createdAt: { $gte: previousPeriodStart, $lt: sevenMonthsAgo },
+      }
       : { _id: null };
     const previousPeriodLeads = await Lead.countDocuments(prevMatch);
     const previousPeriodCompleted = await Lead.countDocuments({ ...prevMatch, status: 'completed' });
@@ -425,33 +425,104 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
  */
 export const getAccountsDashboard = async (req, res, next) => {
   try {
-    // Get pending payouts
-    const pendingPayouts = await Payout.countDocuments({ status: 'pending' });
+    // 1. Core Counts
+    const totalLeads = await Lead.countDocuments();
+    const verifiedLeads = await Lead.countDocuments({ verificationStatus: 'verified' });
+    const disbursedCases = await Lead.countDocuments({ status: { $in: ['disbursed', 'partial_disbursed', 'completed'] } });
+    const activeAgents = await User.countDocuments({ role: 'agent', status: 'active' });
+    const totalInvoices = await Invoice.countDocuments();
 
-    // Get approved invoices
-    const approvedInvoices = await Invoice.countDocuments({ status: 'approved' });
+    // 2. Revenue (Commission Sum)
+    const commissionAggregation = await Invoice.aggregate([
+      { $group: { _id: null, total: { $sum: '$commissionAmount' } } },
+    ]);
+    const totalRevenue = commissionAggregation[0]?.total || 0;
 
-    // Calculate total pending amount
-    const payoutAggregation = await Payout.aggregate([
+    const pendingPayoutAggregation = await Payout.aggregate([
       { $match: { status: 'pending' } },
       { $group: { _id: null, total: { $sum: '$netPayable' } } },
     ]);
-    const totalPendingAmount = payoutAggregation[0]?.total || 0;
+    const totalPendingPayoutAmount = pendingPayoutAggregation[0]?.total || 0;
 
-    // Get pending payouts
-    const payouts = await Payout.find({ status: 'pending' })
-      .populate('agent', 'name email')
-      .populate('franchise', 'name')
+    // 3. Loan Distribution
+    const loanDistributionAgg = await Lead.aggregate([
+      { $group: { _id: '$loanType', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+    ]);
+    const totalForLoan = loanDistributionAgg.reduce((s, i) => s + i.count, 0) || 1;
+    const loanTypeLabels = {
+      personal_loan: 'Personal Loan',
+      home_loan: 'Home Loan',
+      business_loan: 'Business Loan',
+      loan_against_property: 'Loan Against Property',
+      education_loan: 'Education Loan',
+      car_loan: 'Car Loan',
+      gold_loan: 'Gold Loan',
+    };
+    const loanDistributionColors = ['#f97316', '#3b82f6', '#1e40af', '#22c55e', '#84cc16', '#eab308', '#a855f7'];
+    const loanDistribution = loanDistributionAgg.map((item, idx) => ({
+      name: loanTypeLabels[item._id] || item._id || 'Other',
+      value: Math.round((item.count / totalForLoan) * 100),
+      count: item.count,
+      color: loanDistributionColors[idx % loanDistributionColors.length],
+    }));
+
+    // 4. Lead Funnel
+    const funnelSteps = ['logged', 'sanctioned', 'disbursed', 'completed', 'rejected'];
+    const funnelMap = {
+      logged: 'Logged',
+      sanctioned: 'Sanctioned',
+      disbursed: 'Disbursed',
+      completed: 'Completed',
+      rejected: 'Rejected'
+    };
+    const funnelColors = ['#f97316', '#84cc16', '#3b82f6', '#ea580c', '#dc2626'];
+
+    const funnelData = await Promise.all(funnelSteps.map(async (step, idx) => {
+      const count = await Lead.countDocuments({ status: step });
+      return {
+        name: funnelMap[step],
+        value: count,
+        fill: funnelColors[idx]
+      };
+    }));
+
+    // 5. Recent Items
+    const recentLeads = await Lead.find()
+      .select('customerName applicantMobile loanAmount status createdAt')
       .sort({ createdAt: -1 })
-      .limit(10);
+      .limit(5);
+
+    const recentAgents = await User.find({ role: 'agent' })
+      .select('name email status profileImage createdAt')
+      .sort({ createdAt: -1 })
+      .limit(5);
 
     res.status(200).json({
       success: true,
       data: {
-        pendingPayouts,
-        approvedInvoices,
-        totalPendingAmount,
-        payouts,
+        totalLeads,
+        verifiedLeads,
+        disbursedCases,
+        activeAgents,
+        totalInvoices,
+        totalRevenue,
+        totalPendingPayoutAmount,
+        loanDistribution,
+        funnelData,
+        recentLeads: recentLeads.map(l => ({
+          id: l._id,
+          name: l.customerName || 'No Name',
+          amount: `₹${(l.loanAmount || 0).toLocaleString()}`,
+          status: l.status.charAt(0) + l.status.slice(1),
+          date: new Date(l.createdAt).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' })
+        })),
+        recentAgents: recentAgents.map(a => ({
+          name: a.name,
+          email: a.email,
+          status: a.status,
+          avatar: a.profileImage || `https://ui-avatars.com/api/?name=${encodeURIComponent(a.name)}&background=random`
+        })),
       },
     });
   } catch (error) {
@@ -538,6 +609,12 @@ export const getAdminDashboard = async (req, res, next) => {
       value: idx === 0 ? item.value + (100 - sumPct) : item.value,
     }));
 
+    const totalLoanAmountAgg = await Lead.aggregate([
+      ...(Object.keys(franchiseMatch).length ? [{ $match: franchiseMatch }] : []),
+      { $group: { _id: null, total: { $sum: '$loanAmount' } } },
+    ]);
+    const totalLoanAmount = totalLoanAmountAgg[0]?.total || 0;
+
     const loggedCount = await Lead.countDocuments({ ...franchiseMatch, status: 'logged' });
     const sanctionedCount = await Lead.countDocuments({ ...franchiseMatch, status: 'sanctioned' });
     const disbursedCount = await Lead.countDocuments({ ...franchiseMatch, status: { $in: ['partial_disbursed', 'disbursed'] } });
@@ -609,7 +686,7 @@ export const getAdminDashboard = async (req, res, next) => {
     const deliveredEmails = await EmailLog.countDocuments({ status: 'sent' }); // Assuming sent = delivered
     const bouncedEmails = await EmailLog.countDocuments({ status: 'bounced' });
     const failedEmails = await EmailLog.countDocuments({ status: 'failed' });
-    
+
     // Calculate email opened/clicked (if tracking is implemented)
     // For now, estimate based on sent emails
     const openedEmails = Math.floor(sentEmails * 0.49); // ~49% open rate estimate
@@ -661,20 +738,20 @@ export const getAdminDashboard = async (req, res, next) => {
     const completedLeadsCount = await Lead.countDocuments({ status: 'completed' });
     const activeLeadsCount = await Lead.countDocuments({ status: 'active' });
     const verifiedLeadsCount = await Lead.countDocuments({ verificationStatus: 'verified' });
-    
+
     // Calculate metrics
-    const bounceRate = totalLeadsCount > 0 
+    const bounceRate = totalLeadsCount > 0
       ? ((totalLeadsCount - completedLeadsCount) / totalLeadsCount * 100).toFixed(2)
       : 0;
-    
+
     const pageViewsRate = totalLeadsCount > 0
       ? ((verifiedLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
-    
+
     const impressionsRate = totalLeadsCount > 0
       ? ((activeLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
-    
+
     const conversionRate = totalLeadsCount > 0
       ? ((completedLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
@@ -682,7 +759,7 @@ export const getAdminDashboard = async (req, res, next) => {
     // Get previous period data for comparison (previous 7 months before current period)
     const previousPeriodStart = new Date(sevenMonthsAgo);
     previousPeriodStart.setMonth(previousPeriodStart.getMonth() - 7);
-    
+
     const prevMatch = {
       createdAt: { $gte: previousPeriodStart, $lt: sevenMonthsAgo },
       ...(franchiseMatch.franchise && { franchise: { $in: franchiseIds } }),
@@ -695,15 +772,15 @@ export const getAdminDashboard = async (req, res, next) => {
     const prevBounceRate = previousPeriodLeads > 0
       ? ((previousPeriodLeads - previousPeriodCompleted) / previousPeriodLeads * 100).toFixed(2)
       : 0;
-    
+
     const prevPageViewsRate = previousPeriodLeads > 0
       ? ((previousPeriodVerified / previousPeriodLeads) * 100).toFixed(2)
       : 0;
-    
+
     const prevImpressionsRate = previousPeriodLeads > 0
       ? ((previousPeriodActive / previousPeriodLeads) * 100).toFixed(2)
       : 0;
-    
+
     const prevConversionRate = previousPeriodLeads > 0
       ? ((previousPeriodCompleted / previousPeriodLeads) * 100).toFixed(2)
       : 0;
@@ -730,6 +807,7 @@ export const getAdminDashboard = async (req, res, next) => {
         totalCommission,
         totalPayouts,
         totalRevenue: totalCommission,
+        totalLoanAmount,
         leadStatusBreakdown,
         loanDistribution,
         leadConversionFunnel,
@@ -913,14 +991,14 @@ export const getFranchiseOwnerDashboard = async (req, res, next) => {
     const deliveredEmails = await EmailLog.countDocuments({ entityType: 'lead', entityId: { $in: franchiseLeadIds }, status: 'sent' });
     const bouncedEmails = await EmailLog.countDocuments({ entityType: 'lead', entityId: { $in: franchiseLeadIds }, status: 'bounced' });
     const failedEmails = await EmailLog.countDocuments({ entityType: 'lead', entityId: { $in: franchiseLeadIds }, status: 'failed' });
-    
+
     const openedEmails = Math.floor(sentEmails * 0.49);
     const clickedEmails = Math.floor(sentEmails * 0.25);
 
     // Visitor/Lead Data (Monthly aggregation for last 7 months, filtered by franchise)
     const sevenMonthsAgo = new Date();
     sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
-    
+
     const visitorData = await Lead.aggregate([
       {
         $match: {
@@ -965,19 +1043,19 @@ export const getFranchiseOwnerDashboard = async (req, res, next) => {
     const completedLeadsCount = await Lead.countDocuments({ associated: franchiseObjectId, associatedModel: 'Franchise', status: 'completed' });
     const activeLeadsCount = await Lead.countDocuments({ associated: franchiseObjectId, associatedModel: 'Franchise', status: 'active' });
     const verifiedLeadsCount = await Lead.countDocuments({ associated: franchiseObjectId, associatedModel: 'Franchise', verificationStatus: 'verified' });
-    
-    const bounceRate = totalLeadsCount > 0 
+
+    const bounceRate = totalLeadsCount > 0
       ? ((totalLeadsCount - completedLeadsCount) / totalLeadsCount * 100).toFixed(2)
       : 0;
-    
+
     const pageViewsRate = totalLeadsCount > 0
       ? ((verifiedLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
-    
+
     const impressionsRate = totalLeadsCount > 0
       ? ((activeLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
-    
+
     const conversionRate = totalLeadsCount > 0
       ? ((completedLeadsCount / totalLeadsCount) * 100).toFixed(2)
       : 0;
@@ -985,7 +1063,7 @@ export const getFranchiseOwnerDashboard = async (req, res, next) => {
     // Get previous period data for comparison
     const previousPeriodStart = new Date(sevenMonthsAgo);
     previousPeriodStart.setMonth(previousPeriodStart.getMonth() - 7);
-    
+
     const previousPeriodLeads = await Lead.countDocuments({
       associated: franchiseObjectId,
       associatedModel: 'Franchise',
@@ -1013,15 +1091,15 @@ export const getFranchiseOwnerDashboard = async (req, res, next) => {
     const prevBounceRate = previousPeriodLeads > 0
       ? ((previousPeriodLeads - previousPeriodCompleted) / previousPeriodLeads * 100).toFixed(2)
       : 0;
-    
+
     const prevPageViewsRate = previousPeriodLeads > 0
       ? ((previousPeriodVerified / previousPeriodLeads) * 100).toFixed(2)
       : 0;
-    
+
     const prevImpressionsRate = previousPeriodLeads > 0
       ? ((previousPeriodActive / previousPeriodLeads) * 100).toFixed(2)
       : 0;
-    
+
     const prevConversionRate = previousPeriodLeads > 0
       ? ((previousPeriodCompleted / previousPeriodLeads) * 100).toFixed(2)
       : 0;

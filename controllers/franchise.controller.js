@@ -5,6 +5,7 @@ import Invoice from '../models/invoice.model.js';
 import Payout from '../models/payout.model.js';
 import mongoose from 'mongoose';
 import bcrypt from 'bcryptjs';
+import auditService from '../services/audit.service.js';
 import { getPaginationMeta } from '../utils/helpers.js';
 import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } from '../utils/regionalScope.js';
 
@@ -141,7 +142,19 @@ export const getFranchises = async (req, res, next) => {
 
     const query = {};
     if (status) query.status = status;
-    if (req.user.role === 'regional_manager') {
+    if (req.user.role === 'accounts_manager') {
+      // Accountant can only see franchises under assigned Regional Managers
+      const { getAccountantAssignedRegionalManagerIds } = await import('../utils/accountantScope.js');
+      const assignedRMIds = await getAccountantAssignedRegionalManagerIds(req);
+      if (assignedRMIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          pagination: getPaginationMeta(page, limit, 0),
+        });
+      }
+      query.regionalManager = { $in: assignedRMIds };
+    } else if (req.user.role === 'regional_manager') {
       query.regionalManager = req.user._id;
     }
 
@@ -490,14 +503,20 @@ export const deleteFranchise = async (req, res, next) => {
         });
       }
     }
-    const franchise = await Franchise.findByIdAndDelete(req.params.id);
-
+    
+    const franchise = await Franchise.findById(req.params.id);
     if (!franchise) {
       return res.status(404).json({
         success: false,
         message: 'Franchise not found',
       });
     }
+    
+    // Log deletion to audit log
+    const franchiseData = franchise.toObject();
+    await auditService.logDelete(req.user._id, 'Franchise', req.params.id, franchiseData, req);
+    
+    await Franchise.findByIdAndDelete(req.params.id);
 
     res.status(200).json({
       success: true,

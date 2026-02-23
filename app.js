@@ -12,15 +12,21 @@ import dashboardRouter from './routes/dashboard.route.js';
 import franchiseRouter from './routes/franchise.route.js';
 import relationshipManagerRouter from './routes/relationshipManager.route.js';
 import bankRouter from './routes/bank.route.js';
+import leadFormRouter from './routes/leadForm.route.js';
+import fieldDefRouter from './routes/fieldDef.route.js';
 import userRouter from './routes/user.route.js';
 import documentRouter from './routes/document.route.js';
 import reportRouter from './routes/report.route.js';
 import agentRouter from './routes/agent.route.js';
 import staffRouter from './routes/staff.route.js';
 import bankManagerRouter from './routes/bankManager.route.js';
+import accountantManagerRouter from './routes/accountantManager.route.js';
+import accountantRouter from './routes/accountantDashboard.route.js';
+import historyRouter from './routes/history.route.js';
 import connectDB from './config/db.js';
 import { seedDefaultAdmin } from './utils/seedAdmin.js';
 import { seedSampleBankAndManager } from './utils/seedBankAndManager.js';
+import { seedFieldDefinitions } from './utils/seedFieldDefinitions.js';
 import { v2 as cloudinary } from 'cloudinary';
 
 const app = express();
@@ -52,12 +58,17 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/franchises', franchiseRouter);
 app.use('/api/relationship-managers', relationshipManagerRouter);
 app.use('/api/banks', bankRouter);
+app.use('/api/lead-forms', leadFormRouter);
 app.use('/api/users', userRouter);
 app.use('/api/documents', documentRouter);
 app.use('/api/reports', reportRouter);
 app.use('/api/agents', agentRouter);
 app.use('/api/staff', staffRouter);
 app.use('/api/bank-managers', bankManagerRouter);
+app.use('/api/accountant-managers', accountantManagerRouter);
+app.use('/api/accountant', accountantRouter);
+app.use('/api/field-defs', fieldDefRouter);
+app.use('/api/history', historyRouter);
 
 // Error handler (must be last)
 app.use(errorHandler);
@@ -67,7 +78,7 @@ const startServer = async () => {
   try {
     // Connect to MongoDB first
     await connectDB();
-    
+
     // Configure Cloudinary if env variables are present
     if (process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET) {
       cloudinary.config({
@@ -79,13 +90,16 @@ const startServer = async () => {
     } else {
       console.log('Cloudinary not configured - uploads will use local storage.');
     }
-    
+
     // Create default admin user if it doesn't exist
     await seedDefaultAdmin();
-    
+
     // Create a sample bank and bank manager if none exist (useful for local dev)
     await seedSampleBankAndManager();
-    
+
+    // Seed default field definitions (Lead Name, Mobile, Email, Address)
+    await seedFieldDefinitions();
+
     // Start Express server
     app.listen(PORT, () => {
       console.log("\n" + "=".repeat(60));

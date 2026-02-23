@@ -15,16 +15,23 @@ class InvoiceService {
   async generateInvoice(leadId) {
     try {
       const lead = await Lead.findById(leadId)
-        .populate('agent')
-        .populate('franchise');
+        .populate({
+          path: 'agent',
+          populate: {
+            path: 'managedBy',
+            model: 'Franchise'
+          }
+        })
+        .populate('associated');
 
       if (!lead) {
         throw new Error('Lead not found');
       }
 
-      // Check if lead is completed
-      if (lead.status !== 'completed') {
-        throw new Error('Lead must be completed before generating invoice');
+      // Check if lead is in a status that allows invoice generation
+      const allowedStatuses = ['sanctioned', 'partial_disbursed', 'disbursed', 'completed'];
+      if (!allowedStatuses.includes(lead.status)) {
+        throw new Error(`Invoice can only be generated for leads with status: ${allowedStatuses.join(', ')}`);
       }
 
       // Check if invoice already exists
@@ -35,8 +42,21 @@ class InvoiceService {
         }
       }
 
-      // Get commission amount
-      const commissionAmount = lead.actualCommission || lead.expectedCommission || 0;
+      // Get franchise from associated field (polymorphic)
+      let franchiseId = null;
+      if (lead.associatedModel === 'Franchise' && lead.associated) {
+        franchiseId = lead.associated._id || lead.associated;
+      } else {
+        // Try to get franchise from agent's managedBy if it's a Franchise
+        if (lead.agent && lead.agent.managedByModel === 'Franchise' && lead.agent.managedBy) {
+          franchiseId = lead.agent.managedBy._id || lead.agent.managedBy;
+        } else {
+          throw new Error('Franchise information not found for this lead');
+        }
+      }
+
+      // Get commission amount - use commissionAmount from lead (set during disbursement)
+      const commissionAmount = lead.commissionAmount || lead.actualCommission || lead.expectedCommission || 0;
 
       if (commissionAmount === 0) {
         throw new Error('Commission amount is zero, cannot generate invoice');
@@ -54,8 +74,8 @@ class InvoiceService {
       const invoice = await Invoice.create({
         invoiceNumber,
         lead: leadId,
-        agent: lead.agent._id,
-        franchise: lead.franchise._id,
+        agent: lead.agent._id || lead.agent,
+        franchise: franchiseId,
         commissionAmount,
         tdsAmount,
         tdsPercentage,
