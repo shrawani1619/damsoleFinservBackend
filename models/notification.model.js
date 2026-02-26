@@ -25,6 +25,12 @@ const notificationSchema = new mongoose.Schema(
       index: true,
     },
 
+    relatedBannerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Banner',
+      index: true,
+    },
+
     isRead: {
       type: Boolean,
       default: false,
@@ -33,7 +39,7 @@ const notificationSchema = new mongoose.Schema(
 
     type: {
       type: String,
-      enum: ['ticket_assigned', 'ticket_escalated', 'ticket_resolved', 'ticket_reassigned'],
+      enum: ['ticket_assigned', 'ticket_escalated', 'ticket_resolved', 'ticket_reassigned', 'banner_created'],
       default: 'ticket_assigned',
     },
   },

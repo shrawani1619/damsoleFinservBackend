@@ -28,6 +28,7 @@ import form16Router from './routes/form16.route.js';
 import ticketRouter from './routes/ticket.route.js';
 import notificationRouter from './routes/notification.route.js';
 import franchiseCommissionLimitRouter from './routes/franchiseCommissionLimit.route.js';
+import companySettingsRouter from './routes/companySettings.route.js';
 import { startTicketEscalationJob } from './jobs/ticketEscalation.job.js';
 import connectDB from './config/db.js';
 import { seedDefaultAdmin } from './utils/seedAdmin.js';
@@ -93,6 +94,7 @@ app.use('/api/form16', form16Router);
 app.use('/api/tickets', ticketRouter);
 app.use('/api/notifications', notificationRouter);
 app.use('/api/franchise-commission-limits', franchiseCommissionLimitRouter);
+app.use('/api/company-settings', companySettingsRouter);
 
 // Error handler (must be last)
 app.use(errorHandler);

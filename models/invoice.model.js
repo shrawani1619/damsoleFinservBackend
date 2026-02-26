@@ -28,10 +28,32 @@ const invoiceSchema = new mongoose.Schema(
       index: true,
     },
 
+    // Sub-agent reference (optional, for split invoices)
+    subAgent: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      index: true,
+    },
+
     franchise: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Franchise',
       required: true,
+    },
+
+    // Flag to identify referral franchise invoices
+    isReferralFranchise: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    // Invoice type: 'agent', 'sub_agent', or 'franchise'
+    invoiceType: {
+      type: String,
+      enum: ['agent', 'sub_agent', 'franchise'],
+      default: 'agent',
+      index: true,
     },
 
     // Commission details
@@ -121,6 +143,7 @@ const invoiceSchema = new mongoose.Schema(
 
 // Indexes for efficient queries
 invoiceSchema.index({ agent: 1, status: 1 });
+invoiceSchema.index({ subAgent: 1, status: 1 });
 invoiceSchema.index({ franchise: 1, status: 1 });
 invoiceSchema.index({ status: 1, createdAt: -1 });
 invoiceSchema.index({ isEscalated: 1, status: 1 });

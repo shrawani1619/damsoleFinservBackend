@@ -49,6 +49,7 @@ export const getAgentDashboard = async (req, res, next) => {
     const totalCommission = commissionAggregation[0]?.total || 0;
 
     const recentLeads = await Lead.find(baseMatch)
+      .populate('referralFranchise', 'name')
       .populate('bank', 'name')
       .sort({ createdAt: -1 })
       .limit(Math.min(limitNum, 5));
@@ -125,6 +126,7 @@ export const getStaffDashboard = async (req, res, next) => {
     const recentLeads = await Lead.find({ verificationStatus: 'pending' })
       .populate('agent', 'name email')
       .populate('associated', 'name') // polymorphic: Franchise or RelationshipManager
+      .populate('referralFranchise', 'name')
       .populate('bank', 'name')
       .sort({ createdAt: -1 })
       .limit(10);
@@ -266,6 +268,7 @@ export const getRelationshipManagerDashboard = async (req, res, next) => {
       ? await Lead.find({ /* franchise-scoped: leads are linked via `associated` */ associated: { $in: franchiseObjectIds }, associatedModel: 'Franchise' })
         .populate('agent', 'name email')
         .populate('associated', 'name')
+        .populate('referralFranchise', 'name')
         .populate('bank', 'name')
         .sort({ createdAt: -1 })
         .limit(5)
@@ -694,6 +697,7 @@ export const getAdminDashboard = async (req, res, next) => {
     )
       .populate('agent', 'name email')
       .populate('associated', 'name')
+      .populate('referralFranchise', 'name')
       .populate('bank', 'name')
       .sort({ createdAt: -1 })
       .limit(5);
@@ -1015,6 +1019,7 @@ export const getFranchiseOwnerDashboard = async (req, res, next) => {
     const recentLeads = await Lead.find({ associated: franchiseObjectId, associatedModel: 'Franchise' })
       .populate('agent', 'name email')
       .populate('associated', 'name')
+      .populate('referralFranchise', 'name')
       .populate('bank', 'name')
       .sort({ createdAt: -1 })
       .limit(5);

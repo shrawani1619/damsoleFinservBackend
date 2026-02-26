@@ -1,4 +1,6 @@
 import Banner from '../models/banner.model.js';
+import Notification from '../models/notification.model.js';
+import User from '../models/user.model.js';
 
 /**
  * Create Banner
@@ -30,6 +32,26 @@ export const createBanner = async (req, res, next) => {
       status: req.body.status || 'active',
       metadata: req.body.metadata || {},
     });
+
+    // Create notifications for all users when a banner is created
+    try {
+      const allUsers = await User.find({}).select('_id');
+      const notifications = allUsers.map(user => ({
+        userId: user._id,
+        title: 'New Banner Created',
+        message: `A new banner "${banner.name}" has been created. Click to view details.`,
+        relatedBannerId: banner._id,
+        type: 'banner_created',
+        isRead: false,
+      }));
+
+      if (notifications.length > 0) {
+        await Notification.insertMany(notifications);
+      }
+    } catch (notificationError) {
+      // Log error but don't fail banner creation
+      console.error('Error creating notifications for banner:', notificationError);
+    }
 
     res.status(201).json({
       success: true,

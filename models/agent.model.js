@@ -80,6 +80,12 @@ const agentSchema = new mongoose.Schema(
       default: 'active',
     },
 
+    agentType: {
+      type: String,
+      enum: ['normal', 'GST'],
+      default: 'normal',
+    },
+
     city: {
       type: String,
       required: false,

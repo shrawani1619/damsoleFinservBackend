@@ -202,6 +202,15 @@ export const createLead = async (req, res, next) => {
       leadType: req.body.leadType || 'bank',
     };
 
+    // Normalize bank field - use bankId if bank is not provided
+    if (!leadData.bank && leadData.bankId) {
+      leadData.bank = leadData.bankId;
+    }
+    // Remove bankId if bank is set (to avoid confusion)
+    if (leadData.bank) {
+      delete leadData.bankId;
+    }
+
     // If client submitted a dynamic lead form payload, validate required fields/documents
     if (req.body.leadForm) {
       try {
@@ -322,32 +331,47 @@ export const createLead = async (req, res, next) => {
       });
     }
 
-    // Validate sub-agent belongs to the agent creating the lead
-    if (leadData.subAgent && req.user.role === 'agent') {
+    // Validate and set sub-agent name (for agents and hierarchy users)
+    if (leadData.subAgent) {
       try {
-        const subAgent = await User.findOne({ 
-          _id: leadData.subAgent, 
-          parentAgent: req.user._id, 
-          role: 'agent' 
-        });
-        if (!subAgent) {
-          return res.status(403).json({
-            success: false,
-            error: 'Sub-agent not found or does not belong to you',
+        // For agents: validate subAgent belongs to them
+        if (req.user.role === 'agent') {
+          const subAgent = await User.findOne({ 
+            _id: leadData.subAgent, 
+            parentAgent: req.user._id, 
+            role: 'agent' 
           });
+          if (!subAgent) {
+            return res.status(403).json({
+              success: false,
+              error: 'Sub-agent not found or does not belong to you',
+            });
+          }
+          // Get sub-agent name
+          leadData.subAgentName = subAgent.name;
+        } else {
+          // For hierarchy users: just fetch the subAgent name (no validation needed)
+          const subAgent = await User.findById(leadData.subAgent).select('name');
+          if (subAgent) {
+            leadData.subAgentName = subAgent.name;
+          } else {
+            console.warn('Sub-agent not found for ID:', leadData.subAgent);
+          }
         }
-        // Get sub-agent name
-        leadData.subAgentName = subAgent.name;
       } catch (err) {
-        console.warn('Unable to validate sub-agent:', err);
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid sub-agent',
-        });
+        console.warn('Unable to validate/fetch sub-agent:', err);
+        // Don't fail the request, just log the warning
+        // The subAgent ID will still be saved, name might be missing
       }
     }
 
     console.log('🔍 DEBUG: Creating lead with agent:', leadData.agent);
+    console.log('🔍 DEBUG: SubAgent data:', {
+      subAgent: leadData.subAgent,
+      subAgentName: leadData.subAgentName,
+      subAgentFromBody: req.body.subAgent,
+      userRole: req.user.role
+    });
 
     // Ensure SM/BM exists (prefer BankManager for bank contacts; fallback to Staff)
     try {
@@ -437,11 +461,26 @@ export const createLead = async (req, res, next) => {
       console.warn('Unable to ensure ASM BankManager exists:', err);
     }
 
+    console.log('🔍 DEBUG: Lead data before creation:', {
+      subAgent: leadData.subAgent,
+      subAgentName: leadData.subAgentName,
+      agent: leadData.agent,
+      agentName: leadData.agentName
+    });
+    
     const lead = await Lead.create(leadData);
+    
+    console.log('🔍 DEBUG: Lead created:', {
+      leadId: lead._id,
+      subAgent: lead.subAgent,
+      subAgentName: lead.subAgentName
+    });
 
     const populatedLead = await Lead.findById(lead._id)
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('subAgent', 'name email mobile')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -565,7 +604,9 @@ export const getLeads = async (req, res, next) => {
 
     const leads = await Lead.find(query)
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('subAgent', 'name email mobile')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile')
@@ -593,7 +634,9 @@ export const getLeadById = async (req, res, next) => {
   try {
     const lead = await Lead.findById(req.params.id)
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('subAgent', 'name email mobile')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile');
@@ -773,7 +816,7 @@ export const updateLead = async (req, res, next) => {
 
     // Only Relationship Manager, Accountant, and Franchise can set commission percentage and amount
     if (updateData.commissionPercentage !== undefined || updateData.commissionAmount !== undefined) {
-      if (req.user.role !== 'relationship_manager' && req.user.role !== 'accountant' && req.user.role !== 'franchise') {
+      if (req.user.role !== 'relationship_manager' && req.user.role !== 'accountant' && req.user.role !== 'franchise' && req.user.role !== 'accounts_manager') {
         // Remove commission fields if user is not authorized
         delete updateData.commissionPercentage;
         delete updateData.commissionAmount;
@@ -792,6 +835,16 @@ export const updateLead = async (req, res, next) => {
         }
       }
       // Note: Franchise users can set commission even when assigned to self (no restriction)
+    }
+
+    // Handle agent commission fields (for franchise-created leads)
+    // Allow franchise, relationship_manager, accounts_manager, and accountant to update agent commission
+    if (updateData.agentCommissionPercentage !== undefined || updateData.agentCommissionAmount !== undefined) {
+      if (req.user.role !== 'franchise' && req.user.role !== 'relationship_manager' && req.user.role !== 'accounts_manager' && req.user.role !== 'accountant' && req.user.role !== 'super_admin') {
+        // Remove agent commission fields if user is not authorized
+        delete updateData.agentCommissionPercentage;
+        delete updateData.agentCommissionAmount;
+      }
     }
 
     // Promote fields from formValues if present (same logic as createLead)
@@ -838,7 +891,9 @@ export const updateLead = async (req, res, next) => {
       runValidators: true,
     })
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('subAgent', 'name email mobile')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('verifiedBy', 'name email')
       .populate('smBm', 'name email mobile');
@@ -928,7 +983,8 @@ export const updateLeadStatus = async (req, res, next) => {
           { new: true, runValidators: true }
         )
           .populate('agent', 'name email mobile')
-          .populate('associated', 'name')
+          .populate('associated', 'name email mobile')
+          .populate('referralFranchise', 'name email mobile')
           .populate('bank', 'name type')
           .populate('smBm', 'name email mobile');
 
@@ -1060,7 +1116,8 @@ export const updateLeadStatus = async (req, res, next) => {
       { new: true, runValidators: true }
     )
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -1199,7 +1256,8 @@ export const verifyLead = async (req, res, next) => {
       { new: true, runValidators: true }
     )
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -1535,7 +1593,8 @@ export const getApprovedLeads = async (req, res, next) => {
 
     const leads = await Lead.find(query)
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile')
       .sort({ updatedAt: -1 })
@@ -1660,7 +1719,8 @@ export const forwardLeadToRM = async (req, res, next) => {
       { new: true, runValidators: true }
     )
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name type')
       .populate('smBm', 'name email mobile');
 
@@ -1781,7 +1841,8 @@ export const getDisbursementEmailPreview = async (req, res, next) => {
     // Get lead with all populated data
     const lead = await Lead.findById(leadId)
       .populate('agent', 'name email mobile')
-      .populate('associated', 'name email')
+      .populate('associated', 'name email mobile')
+      .populate('referralFranchise', 'name email mobile')
       .populate('bank', 'name contactEmail')
       .populate('smBm', 'name email mobile');
 

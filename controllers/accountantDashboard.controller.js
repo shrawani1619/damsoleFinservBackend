@@ -138,13 +138,43 @@ export const getApprovedLeads = async (req, res, next) => {
       .limit(limit * 1)
       .skip((page - 1) * limit)
       .populate('agent', 'name email')
+      .populate('subAgent', 'name email')
+      .populate('referralFranchise', 'name')
       .populate('bank', 'name')
       .populate({
         path: 'associated',
         select: 'name',
-        match: { __t: 'Franchise' } // Only populate if it's a Franchise
+        // Populate both Franchise and RelationshipManager
+        // Remove match filter to allow both models
       })
       .select('-documents -history');
+
+    // Get invoice information for each lead
+    const Invoice = (await import('../models/invoice.model.js')).default;
+    const leadIds = leads.map(lead => lead._id);
+    const invoices = await Invoice.find({ lead: { $in: leadIds } })
+      .select('lead invoiceType')
+      .lean();
+    
+    // Create a map of leadId -> invoices
+    const invoiceMap = {};
+    invoices.forEach(invoice => {
+      const leadId = invoice.lead.toString();
+      if (!invoiceMap[leadId]) {
+        invoiceMap[leadId] = {};
+      }
+      invoiceMap[leadId][invoice.invoiceType] = true;
+    });
+    
+    // Add invoice information to each lead
+    const leadsWithInvoices = leads.map(lead => {
+      const leadObj = lead.toObject();
+      const leadId = lead._id.toString();
+      leadObj.hasAgentInvoice = invoiceMap[leadId]?.agent || false;
+      leadObj.hasSubAgentInvoice = invoiceMap[leadId]?.sub_agent || false;
+      leadObj.hasFranchiseInvoice = invoiceMap[leadId]?.franchise || false;
+      return leadObj;
+    });
 
     // Get total count for pagination
     const total = await Lead.countDocuments(query);
@@ -152,7 +182,7 @@ export const getApprovedLeads = async (req, res, next) => {
     res.status(200).json({
       success: true,
       data: {
-        leads,
+        leads: leadsWithInvoices,
         pagination: {
           currentPage: parseInt(page),
           totalPages: Math.ceil(total / limit),
@@ -194,11 +224,13 @@ export const getApprovedLeadDetails = async (req, res, next) => {
     // Find lead with approved status only (using correct status values)
     const lead = await Lead.findOne(query)
     .populate('agent', 'name email mobile')
+    .populate('referralFranchise', 'name')
     .populate('bank', 'name type')
     .populate({
       path: 'associated',
       select: 'name',
-      match: { __t: 'Franchise' } // Only populate if it's a Franchise
+      // Populate both Franchise and RelationshipManager
+      // Remove match filter to allow both models
     })
     .populate('createdBy', 'name email')
     .select('+disbursementHistory');

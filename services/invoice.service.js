@@ -1,5 +1,8 @@
 import Invoice from '../models/invoice.model.js';
 import Lead from '../models/lead.model.js';
+import Franchise from '../models/franchise.model.js';
+import FranchiseCommissionLimit from '../models/franchiseCommissionLimit.model.js';
+import User from '../models/user.model.js';
 import { generateInvoiceNumber } from '../utils/helpers.js';
 
 /**
@@ -8,7 +11,9 @@ import { generateInvoiceNumber } from '../utils/helpers.js';
  */
 class InvoiceService {
   /**
-   * Generate invoice for a completed lead
+   * Generate invoice for a lead based on status
+   * - If status = "disbursed": Generate Agent Invoice
+   * - If status = "completed": Generate Franchise Invoice
    * @param {ObjectId} leadId - Lead ID
    * @returns {Promise<Object>} Created invoice
    */
@@ -22,74 +27,426 @@ class InvoiceService {
             model: 'Franchise'
           }
         })
-        .populate('associated');
+        .populate('subAgent', 'name email')
+        .populate('associated')
+        .populate('referralFranchise')
+        .populate('bank', 'name');
 
       if (!lead) {
         throw new Error('Lead not found');
       }
 
-      // Check if lead is in a status that allows invoice generation
-      const allowedStatuses = ['sanctioned', 'partial_disbursed', 'disbursed', 'completed'];
-      if (!allowedStatuses.includes(lead.status)) {
-        throw new Error(`Invoice can only be generated for leads with status: ${allowedStatuses.join(', ')}`);
-      }
-
-      // Check if invoice already exists
-      if (lead.isInvoiceGenerated || lead.invoice) {
-        const existingInvoice = await Invoice.findById(lead.invoice);
-        if (existingInvoice) {
-          return existingInvoice;
-        }
+      // Only allow invoice generation for "disbursed" or "completed" status
+      if (lead.status !== 'disbursed' && lead.status !== 'completed') {
+        throw new Error(`Invoice can only be generated for leads with status "disbursed" or "completed". Current status: ${lead.status}`);
       }
 
       // Get franchise from associated field (polymorphic)
       let franchiseId = null;
+      let franchise = null;
       if (lead.associatedModel === 'Franchise' && lead.associated) {
         franchiseId = lead.associated._id || lead.associated;
+        franchise = await Franchise.findById(franchiseId);
       } else {
         // Try to get franchise from agent's managedBy if it's a Franchise
         if (lead.agent && lead.agent.managedByModel === 'Franchise' && lead.agent.managedBy) {
           franchiseId = lead.agent.managedBy._id || lead.agent.managedBy;
+          franchise = await Franchise.findById(franchiseId);
         } else {
           throw new Error('Franchise information not found for this lead');
         }
       }
 
-      // Get commission amount - use commissionAmount from lead (set during disbursement)
-      const commissionAmount = lead.commissionAmount || lead.actualCommission || lead.expectedCommission || 0;
-
-      if (commissionAmount === 0) {
-        throw new Error('Commission amount is zero, cannot generate invoice');
+      if (!franchise) {
+        throw new Error('Franchise not found');
       }
 
-      // Calculate TDS (2%)
-      const tdsPercentage = 2;
-      const tdsAmount = (commissionAmount * tdsPercentage) / 100;
-      const netPayable = commissionAmount - tdsAmount;
+      let invoiceType = 'agent';
+      let commissionAmount = 0;
+      const loanAmount = lead.loanAmount || 0;
 
-      // Generate invoice number
-      const invoiceNumber = await generateInvoiceNumber();
+      if (lead.status === 'disbursed') {
+        // Check if lead has subAgent - if yes, generate split invoices
+        // Check both subAgent (ObjectId or populated) and subAgentName for robustness
+        // Also check the raw document in case subAgent is set but populated as null
+        const rawLead = await Lead.findById(leadId).select('subAgent subAgentName').lean();
+        const hasSubAgent = !!(lead.subAgent || lead.subAgentName || rawLead?.subAgent || rawLead?.subAgentName);
+        
+        if (hasSubAgent) {
+          // Generate split invoices: one for Agent, one for SubAgent
+          // Use the commission rate decided by the agent when creating the lead
+          const agentCommissionPercentage = lead.agentCommissionPercentage || 0;
+          const subAgentCommissionPercentage = lead.subAgentCommissionPercentage || 0;
+          
+          console.log('🔍 Split Invoice Debug - Using Agent-Decided Commission Rates:', {
+            hasSubAgent: !!hasSubAgent,
+            subAgent: lead.subAgent,
+            subAgentName: lead.subAgentName,
+            rawSubAgent: rawLead?.subAgent,
+            rawSubAgentName: rawLead?.subAgentName,
+            agentCommissionPercentage: `${agentCommissionPercentage}% (set by agent)`,
+            subAgentCommissionPercentage: `${subAgentCommissionPercentage}% (decided by agent)`,
+            loanAmount,
+            note: 'SubAgent invoice will use the commission rate decided by the agent when creating the lead'
+          });
+          
+          if (agentCommissionPercentage <= 0) {
+            throw new Error('Agent commission percentage is not set or is zero. Cannot generate split invoices.');
+          }
 
-      // Create invoice
-      const invoice = await Invoice.create({
-        invoiceNumber,
-        lead: leadId,
-        agent: lead.agent._id || lead.agent,
-        franchise: franchiseId,
-        commissionAmount,
-        tdsAmount,
-        tdsPercentage,
-        netPayable,
-        status: 'pending',
-        invoiceDate: new Date(),
-      });
+          if (subAgentCommissionPercentage <= 0) {
+            throw new Error('Sub-agent commission percentage is not set or is zero. Cannot generate split invoices. Please ensure the agent set a commission rate for the sub-agent when creating the lead.');
+          }
 
-      // Update lead
-      lead.invoice = invoice._id;
-      lead.isInvoiceGenerated = true;
-      await lead.save();
+          // Calculate Agent's remaining commission (total - subAgent's share)
+          const agentRemainingPercentage = agentCommissionPercentage - subAgentCommissionPercentage;
+          
+          if (agentRemainingPercentage <= 0) {
+            throw new Error(`Agent remaining commission percentage is zero or negative. Agent: ${agentCommissionPercentage}%, SubAgent: ${subAgentCommissionPercentage}%.`);
+          }
 
-      return invoice;
+          // Check for existing invoices
+          const existingAgentInvoice = await Invoice.findOne({
+            lead: leadId,
+            invoiceType: 'agent'
+          });
+
+          const existingSubAgentInvoice = await Invoice.findOne({
+            lead: leadId,
+            invoiceType: 'sub_agent'
+          });
+
+          if (existingAgentInvoice || existingSubAgentInvoice) {
+            throw new Error('Invoices already exist for this lead. Duplicate invoice generation prevented.');
+          }
+
+          // Calculate commission amounts
+          // SubAgent commission uses the rate decided by the agent (subAgentCommissionPercentage)
+          const agentCommissionAmount = (loanAmount * agentRemainingPercentage) / 100;
+          const subAgentCommissionAmount = (loanAmount * subAgentCommissionPercentage) / 100;
+          
+          console.log('💰 Commission Calculation:', {
+            loanAmount,
+            agentTotalCommission: `${agentCommissionPercentage}%`,
+            subAgentCommission: `${subAgentCommissionPercentage}% (agent-decided rate)`,
+            agentRemainingCommission: `${agentRemainingPercentage}%`,
+            agentCommissionAmount: `₹${agentCommissionAmount.toLocaleString()}`,
+            subAgentCommissionAmount: `₹${subAgentCommissionAmount.toLocaleString()} (using agent-decided rate)`
+          });
+
+          if (agentCommissionAmount <= 0 || subAgentCommissionAmount <= 0) {
+            throw new Error('Calculated commission amounts are zero. Cannot generate invoices.');
+          }
+
+          // Calculate TDS for both invoices (2%)
+          const tdsPercentage = 2;
+          const agentTdsAmount = (agentCommissionAmount * tdsPercentage) / 100;
+          const subAgentTdsAmount = (subAgentCommissionAmount * tdsPercentage) / 100;
+          const agentNetPayable = agentCommissionAmount - agentTdsAmount;
+          const subAgentNetPayable = subAgentCommissionAmount - subAgentTdsAmount;
+
+          // Generate invoice numbers
+          const agentInvoiceNumber = await generateInvoiceNumber();
+          const subAgentInvoiceNumber = await generateInvoiceNumber();
+
+          // Create Agent Invoice
+          const agentInvoice = await Invoice.create({
+            invoiceNumber: agentInvoiceNumber,
+            lead: leadId,
+            agent: lead.agent._id || lead.agent,
+            franchise: franchiseId,
+            invoiceType: 'agent',
+            commissionAmount: agentCommissionAmount,
+            tdsAmount: agentTdsAmount,
+            tdsPercentage,
+            netPayable: agentNetPayable,
+            status: 'pending',
+            invoiceDate: new Date(),
+          });
+
+          // Get subAgent ID - handle both populated and unpopulated cases
+          let subAgentId = null;
+          
+          // First try to get from populated subAgent
+          if (lead.subAgent) {
+            // Handle both populated object and ObjectId
+            if (typeof lead.subAgent === 'object' && lead.subAgent._id) {
+              subAgentId = lead.subAgent._id;
+            } else {
+              subAgentId = lead.subAgent;
+            }
+          }
+          
+          // If not found, try from raw document
+          if (!subAgentId && rawLead?.subAgent) {
+            subAgentId = rawLead.subAgent;
+          }
+          
+          // If still not found, try to find by name
+          if (!subAgentId && (lead.subAgentName || rawLead?.subAgentName)) {
+            const subAgentName = lead.subAgentName || rawLead.subAgentName;
+            const subAgentUser = await User.findOne({ 
+              name: subAgentName,
+              parentAgent: lead.agent._id || lead.agent,
+              role: 'agent'
+            });
+            if (subAgentUser) {
+              subAgentId = subAgentUser._id;
+            } else {
+              throw new Error(`Sub-agent "${subAgentName}" not found for this agent. Cannot generate sub-agent invoice.`);
+            }
+          }
+          
+          if (!subAgentId) {
+            throw new Error('Sub-agent ID could not be determined. Please ensure the lead has a valid sub-agent assigned.');
+          }
+
+          // Create SubAgent Invoice
+          // Note: commissionAmount is calculated using subAgentCommissionPercentage 
+          // which was decided by the agent when creating the lead
+          const subAgentInvoice = await Invoice.create({
+            invoiceNumber: subAgentInvoiceNumber,
+            lead: leadId,
+            agent: lead.agent._id || lead.agent, // Keep agent reference for tracking
+            subAgent: subAgentId,
+            franchise: franchiseId,
+            invoiceType: 'sub_agent',
+            commissionAmount: subAgentCommissionAmount, // Uses agent-decided subAgentCommissionPercentage from lead
+            tdsAmount: subAgentTdsAmount,
+            tdsPercentage,
+            netPayable: subAgentNetPayable,
+            status: 'pending',
+            invoiceDate: new Date(),
+          });
+          
+          console.log('✅ Split invoices created:', {
+            agentInvoice: agentInvoice._id,
+            subAgentInvoice: subAgentInvoice._id
+          });
+
+          // Update lead - mark as invoice generated
+          if (!lead.invoice) {
+            lead.invoice = agentInvoice._id; // Store agent invoice as primary reference
+          }
+          lead.isInvoiceGenerated = true;
+          await lead.save();
+
+          // Return both invoices (return agent invoice as primary, but both are created)
+          return { agentInvoice, subAgentInvoice, isSplit: true };
+        } else {
+          // Generate single Agent Invoice (no subAgent)
+          invoiceType = 'agent';
+          
+          // Use Agent Commission % set while creating the Lead
+          const agentCommissionPercentage = lead.agentCommissionPercentage || 0;
+          
+          if (agentCommissionPercentage <= 0) {
+            throw new Error('Agent commission percentage is not set or is zero. Cannot generate agent invoice.');
+          }
+
+          // Calculate: Agent Commission Amount = (Loan Amount × Agent Commission %) / 100
+          commissionAmount = (loanAmount * agentCommissionPercentage) / 100;
+
+          if (commissionAmount <= 0) {
+            throw new Error('Calculated agent commission amount is zero. Cannot generate invoice.');
+          }
+
+          // Check for duplicate agent invoice
+          const existingAgentInvoice = await Invoice.findOne({
+            lead: leadId,
+            invoiceType: 'agent'
+          });
+
+          if (existingAgentInvoice) {
+            throw new Error('Agent invoice already exists for this lead. Duplicate invoice generation prevented.');
+          }
+
+          // Calculate TDS (2%)
+          const tdsPercentage = 2;
+          const tdsAmount = (commissionAmount * tdsPercentage) / 100;
+          const netPayable = commissionAmount - tdsAmount;
+
+          // Generate invoice number
+          const invoiceNumber = await generateInvoiceNumber();
+
+          // Create invoice
+          const invoice = await Invoice.create({
+            invoiceNumber,
+            lead: leadId,
+            agent: lead.agent._id || lead.agent,
+            franchise: franchiseId,
+            invoiceType,
+            commissionAmount,
+            tdsAmount,
+            tdsPercentage,
+            netPayable,
+            status: 'pending',
+            invoiceDate: new Date(),
+          });
+
+          // Update lead - mark as invoice generated (but don't overwrite if invoice field already exists)
+          if (!lead.invoice) {
+            lead.invoice = invoice._id;
+          }
+          lead.isInvoiceGenerated = true;
+          await lead.save();
+
+          return invoice;
+        }
+
+      } else if (lead.status === 'completed') {
+        // Generate Franchise Invoice
+        invoiceType = 'franchise';
+        
+        // Get Franchise Commission % from FranchiseCommissionLimit (set by Admin per bank)
+        // This is the default commission percentage for the franchise for this specific bank
+        let franchiseCommissionPercentage = 0;
+        
+        // Get bank ID from lead
+        const bankId = lead.bank?._id || lead.bank;
+        if (!bankId) {
+          throw new Error('Bank information not found for this lead. Cannot determine franchise commission percentage.');
+        }
+        
+        // Get Franchise Commission Limit for this bank (set by Admin)
+        const franchiseCommissionLimit = await FranchiseCommissionLimit.findOne({ bank: bankId });
+        
+        if (!franchiseCommissionLimit) {
+          throw new Error(`Franchise commission limit is not set for this bank. Please set the commission limit for this bank in the Franchise Commission settings.`);
+        }
+        
+        // Use the maxCommissionValue as franchise commission percentage
+        // Note: This assumes limitType is 'percentage' (which is the standard)
+        if (franchiseCommissionLimit.limitType === 'percentage') {
+          franchiseCommissionPercentage = parseFloat(franchiseCommissionLimit.maxCommissionValue) || 0;
+        } else {
+          // If it's amount-based, we can't use it as percentage
+          throw new Error(`Franchise commission limit for this bank is set as amount (₹${franchiseCommissionLimit.maxCommissionValue}), not percentage. Please configure it as percentage in Franchise Commission settings.`);
+        }
+        
+        if (franchiseCommissionPercentage <= 0) {
+          throw new Error(`Franchise commission percentage is zero for this bank. Please set a valid commission percentage in the Franchise Commission settings.`);
+        }
+
+        // Get Agent Commission % from lead
+        const agentCommissionPercentage = lead.agentCommissionPercentage || 0;
+        
+        // Get Referral Franchise Commission % from lead (if exists)
+        const referralFranchiseCommissionPercentage = lead.referralFranchiseCommissionPercentage || 0;
+
+        // Calculate remaining commission: Franchise Commission % - Agent Commission % - Referral Franchise Commission %
+        const remainingCommissionPercentage = franchiseCommissionPercentage - agentCommissionPercentage - referralFranchiseCommissionPercentage;
+
+        // If remaining commission is zero or negative
+        if (remainingCommissionPercentage <= 0) {
+          throw new Error(`Franchise commission is zero or negative. Total commission: ${franchiseCommissionPercentage}%, Agent commission: ${agentCommissionPercentage}%, Referral franchise commission: ${referralFranchiseCommissionPercentage}%. The sum of agent and referral franchise commissions equals or exceeds the total franchise commission.`);
+        }
+
+        // Calculate: Franchise Commission Amount = (Loan Amount × Remaining Commission %) / 100
+        commissionAmount = (loanAmount * remainingCommissionPercentage) / 100;
+
+        if (commissionAmount <= 0) {
+          throw new Error(`Calculated franchise commission amount is zero. Loan Amount: ${loanAmount}, Remaining Commission %: ${remainingCommissionPercentage}%.`);
+        }
+
+        // Check for duplicate main franchise invoice (not referral)
+        const existingFranchiseInvoice = await Invoice.findOne({
+          lead: leadId,
+          invoiceType: 'franchise',
+          $or: [
+            { isReferralFranchise: { $exists: false } },
+            { isReferralFranchise: false }
+          ]
+        });
+
+        if (existingFranchiseInvoice) {
+          throw new Error('Main franchise invoice already exists for this lead. Duplicate invoice generation prevented.');
+        }
+
+        // Calculate TDS (2%)
+        const tdsPercentage = 2;
+        const tdsAmount = (commissionAmount * tdsPercentage) / 100;
+        const netPayable = commissionAmount - tdsAmount;
+
+        // Generate invoice number
+        const invoiceNumber = await generateInvoiceNumber();
+
+        // Create invoice
+        const invoice = await Invoice.create({
+          invoiceNumber,
+          lead: leadId,
+          agent: lead.agent._id || lead.agent,
+          franchise: franchiseId,
+          invoiceType,
+          commissionAmount,
+          tdsAmount,
+          tdsPercentage,
+          netPayable,
+          status: 'pending',
+          invoiceDate: new Date(),
+        });
+
+        // Update lead - mark as invoice generated (but don't overwrite if invoice field already exists)
+        if (!lead.invoice) {
+          lead.invoice = invoice._id;
+        }
+        lead.isInvoiceGenerated = true;
+        await lead.save();
+
+        // If referral franchise exists, create a second invoice for the referral franchise
+        if (lead.referralFranchise) {
+          const referralFranchiseId = lead.referralFranchise._id || lead.referralFranchise;
+          
+          // Get referral franchise commission from lead
+          const referralCommissionPercentage = lead.referralFranchiseCommissionPercentage || 0;
+          const referralCommissionAmount = lead.referralFranchiseCommissionAmount || 0;
+
+          if (referralCommissionAmount > 0) {
+            // Check for duplicate referral franchise invoice
+            const existingReferralInvoice = await Invoice.findOne({
+              lead: leadId,
+              invoiceType: 'franchise',
+              franchise: referralFranchiseId,
+              isReferralFranchise: true
+            });
+
+            if (!existingReferralInvoice) {
+              // Calculate TDS (2%) for referral franchise
+              const referralTdsPercentage = 2;
+              const referralTdsAmount = (referralCommissionAmount * referralTdsPercentage) / 100;
+              const referralNetPayable = referralCommissionAmount - referralTdsAmount;
+
+              // Generate invoice number for referral franchise
+              const referralInvoiceNumber = await generateInvoiceNumber();
+
+              // Create invoice for referral franchise (with isReferralFranchise flag)
+              const referralInvoice = await Invoice.create({
+                invoiceNumber: referralInvoiceNumber,
+                lead: leadId,
+                agent: lead.agent._id || lead.agent,
+                franchise: referralFranchiseId,
+                invoiceType: 'franchise',
+                isReferralFranchise: true, // Mark as referral franchise invoice
+                commissionAmount: referralCommissionAmount,
+                tdsAmount: referralTdsAmount,
+                tdsPercentage: referralTdsPercentage,
+                netPayable: referralNetPayable,
+                status: 'pending',
+                invoiceDate: new Date(),
+              });
+
+              // Return both invoices (main invoice and referral invoice)
+              return {
+                mainInvoice: invoice,
+                referralInvoice: referralInvoice
+              };
+            }
+          }
+        }
+
+        return invoice;
+      }
+
     } catch (error) {
       throw new Error(`Error generating invoice: ${error.message}`);
     }
@@ -267,9 +624,16 @@ class InvoiceService {
   async getInvoiceById(invoiceId) {
     try {
       const invoice = await Invoice.findById(invoiceId)
-        .populate('lead')
-        .populate('agent')
-        .populate('franchise')
+        .populate({
+          path: 'lead',
+          populate: {
+            path: 'bank',
+            select: 'name'
+          }
+        })
+        .populate('agent', 'name email mobile city address kyc bankDetails')
+        .populate('subAgent', 'name email mobile city address kyc bankDetails')
+        .populate('franchise', 'name email mobile address kyc bankDetails')
         .populate('payout')
         .populate('approvedBy', 'name email')
         .populate('rejectedBy', 'name email')

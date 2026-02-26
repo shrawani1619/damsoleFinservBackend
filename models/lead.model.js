@@ -154,6 +154,45 @@ const leadSchema = new mongoose.Schema(
       default: 0,
     },
 
+    // Agent commission fields (for franchise-created leads)
+    agentCommissionPercentage: {
+      type: Number,
+      default: 0,
+    },
+
+    agentCommissionAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    // Sub-agent commission fields (for agent-created leads with sub-agents)
+    subAgentCommissionPercentage: {
+      type: Number,
+      default: 0,
+    },
+
+    subAgentCommissionAmount: {
+      type: Number,
+      default: 0,
+    },
+
+    // Referral franchise fields (when a franchise refers lead to another franchise)
+    referralFranchise: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Franchise',
+      index: true,
+    },
+
+    referralFranchiseCommissionPercentage: {
+      type: Number,
+      default: 0,
+    },
+
+    referralFranchiseCommissionAmount: {
+      type: Number,
+      default: 0,
+    },
+
     // Verification workflow
     verificationStatus: {
       type: String,

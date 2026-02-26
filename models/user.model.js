@@ -41,7 +41,10 @@ const userSchema = new mongoose.Schema(
 
     password: {
       type: String,
-      required: true,
+      // Password is not required for sub-agents (they don't log in)
+      required: function () {
+        return !this.parentAgent; // Not required if parentAgent exists (sub-agent)
+      },
       select: false,
     },
 

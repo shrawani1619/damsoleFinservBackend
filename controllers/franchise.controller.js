@@ -14,7 +14,7 @@ import { getRegionalManagerFranchiseIds, regionalManagerCanAccessFranchise } fro
  */
 export const createFranchise = async (req, res, next) => {
   try {
-    const { name, ownerName, email, mobile, password, address, status, commissionStructure, regionalManager } = req.body;
+    const { name, ownerName, email, mobile, password, address, status, commissionStructure, commissionPercentage, regionalManager, franchiseType } = req.body;
 
     if (!name?.trim()) {
       return res.status(400).json({
@@ -22,12 +22,7 @@ export const createFranchise = async (req, res, next) => {
         message: 'Franchise name is required',
       });
     }
-    if (!ownerName?.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Owner name is required',
-      });
-    }
+
     if (!email?.trim()) {
       return res.status(400).json({
         success: false,
@@ -47,6 +42,18 @@ export const createFranchise = async (req, res, next) => {
       });
     }
 
+    // Validate commissionPercentage if provided
+    if (commissionPercentage !== undefined && commissionPercentage !== null && commissionPercentage !== '') {
+      const parsedCommission = parseFloat(commissionPercentage);
+      if (isNaN(parsedCommission) || parsedCommission < 0 || parsedCommission > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Commission percentage must be between 0 and 100',
+        });
+      }
+    }
+
+    // Check if user with this email or mobile already exists
     const existingUser = await User.findOne({
       $or: [{ email: email.toLowerCase().trim() }, { mobile: mobile.trim() }],
     });
@@ -54,6 +61,17 @@ export const createFranchise = async (req, res, next) => {
       return res.status(400).json({
         success: false,
         message: 'A user with this email or mobile already exists',
+      });
+    }
+
+    // Check if franchise with this email or mobile already exists
+    const existingFranchise = await Franchise.findOne({
+      $or: [{ email: email.toLowerCase().trim() }, { mobile: mobile.trim() }],
+    });
+    if (existingFranchise) {
+      return res.status(400).json({
+        success: false,
+        message: `Email "${email}" already exists. Please use a different email.`,
       });
     }
 
@@ -78,8 +96,12 @@ export const createFranchise = async (req, res, next) => {
       email: email.toLowerCase().trim(),
       mobile: mobile.trim(),
       status: status || 'active',
+      franchiseType: franchiseType || 'normal',
       address: address || {},
       commissionStructure: commissionStructure || {},
+      ...(commissionPercentage !== undefined && commissionPercentage !== null && commissionPercentage !== '' 
+        ? { commissionPercentage: parseFloat(commissionPercentage) } 
+        : {}),
       ...(allowedRegionalManager && { regionalManager: allowedRegionalManager }),
     };
     if (req.user.role === 'regional_manager') {
@@ -273,6 +295,18 @@ export const updateFranchise = async (req, res, next) => {
       }
     }
     const updatePayload = { ...req.body };
+    
+    // Parse commissionPercentage if provided
+    if (updatePayload.commissionPercentage !== undefined && updatePayload.commissionPercentage !== null && updatePayload.commissionPercentage !== '') {
+      updatePayload.commissionPercentage = parseFloat(updatePayload.commissionPercentage);
+      if (isNaN(updatePayload.commissionPercentage) || updatePayload.commissionPercentage < 0 || updatePayload.commissionPercentage > 100) {
+        return res.status(400).json({
+          success: false,
+          message: 'Commission percentage must be between 0 and 100',
+        });
+      }
+    }
+    
     if (req.user.role !== 'super_admin') {
       delete updatePayload.regionalManager;
     }

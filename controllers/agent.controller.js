@@ -152,6 +152,10 @@ export const getAgents = async (req, res, next) => {
       query.$or = orClauses;
     }
 
+    // Exclude sub-agents (those with parentAgent) from the agents list
+    // Sub-agents should only appear in the SubAgents page
+    query.parentAgent = { $exists: false };
+
     const agents = await User.find(query)
       .select('-password')
       .populate('managedBy', 'name')
@@ -511,7 +515,14 @@ export const createSubAgent = async (req, res, next) => {
       // Inherit managedBy from parent agent
       managedBy: req.user.managedBy,
       managedByModel: req.user.managedByModel,
+      // Don't set password - sub-agents don't need to log in
+      // Only include password if explicitly provided
     };
+    
+    // Remove password from subAgentData if not provided (sub-agents don't need passwords)
+    if (!req.body.password) {
+      delete subAgentData.password;
+    }
 
     const subAgent = await User.create(subAgentData);
 
@@ -530,20 +541,28 @@ export const createSubAgent = async (req, res, next) => {
 };
 
 /**
- * Get All Sub-Agents (for current agent)
+ * Get All Sub-Agents (for current agent or admin)
  */
 export const getSubAgents = async (req, res, next) => {
   try {
-    // Only agents can view their sub-agents
-    if (req.user.role !== 'agent') {
+    // Only agents and super_admin can view sub-agents
+    if (req.user.role !== 'agent' && req.user.role !== 'super_admin') {
       return res.status(403).json({
         success: false,
-        error: 'Only agents can view sub-agents',
+        error: 'Only agents and admins can view sub-agents',
       });
     }
 
-    // Agents can only see their own sub-agents
-    const subAgents = await User.find({ parentAgent: req.user._id, role: 'agent' })
+    // Build query: agents see only their own, super_admin sees all
+    const query = { role: 'agent' };
+    if (req.user.role === 'agent') {
+      query.parentAgent = req.user._id;
+    } else if (req.user.role === 'super_admin') {
+      // Admin can see all sub-agents (those with parentAgent set)
+      query.parentAgent = { $exists: true, $ne: null };
+    }
+
+    const subAgents = await User.find(query)
       .select('-password')
       .populate('parentAgent', 'name email')
       .populate('managedBy', 'name')
@@ -563,20 +582,21 @@ export const getSubAgents = async (req, res, next) => {
  */
 export const getSubAgentById = async (req, res, next) => {
   try {
-    // Only agents can view their sub-agents
-    if (req.user.role !== 'agent') {
+    // Only agents and super_admin can view sub-agents
+    if (req.user.role !== 'agent' && req.user.role !== 'super_admin') {
       return res.status(403).json({
         success: false,
-        error: 'Only agents can view sub-agents',
+        error: 'Only agents and admins can view sub-agents',
       });
     }
 
-    // Agents can only view their own sub-agents
-    const subAgent = await User.findOne({ 
-      _id: req.params.id, 
-      parentAgent: req.user._id, 
-      role: 'agent' 
-    })
+    // Build query: agents see only their own, super_admin sees all
+    const query = { _id: req.params.id, role: 'agent' };
+    if (req.user.role === 'agent') {
+      query.parentAgent = req.user._id;
+    }
+
+    const subAgent = await User.findOne(query)
       .select('-password')
       .populate('parentAgent', 'name email')
       .populate('managedBy', 'name');
@@ -602,20 +622,21 @@ export const getSubAgentById = async (req, res, next) => {
  */
 export const updateSubAgent = async (req, res, next) => {
   try {
-    // Only agents can update their sub-agents
-    if (req.user.role !== 'agent') {
+    // Only agents and super_admin can update sub-agents
+    if (req.user.role !== 'agent' && req.user.role !== 'super_admin') {
       return res.status(403).json({
         success: false,
-        error: 'Only agents can update sub-agents',
+        error: 'Only agents and admins can update sub-agents',
       });
     }
 
-    // Agents can only update their own sub-agents
-    const existingSubAgent = await User.findOne({ 
-      _id: req.params.id, 
-      parentAgent: req.user._id, 
-      role: 'agent' 
-    });
+    // Build query: agents can only update their own, super_admin can update any
+    const query = { _id: req.params.id, role: 'agent' };
+    if (req.user.role === 'agent') {
+      query.parentAgent = req.user._id;
+    }
+
+    const existingSubAgent = await User.findOne(query);
 
     if (!existingSubAgent) {
       return res.status(404).json({
@@ -624,16 +645,17 @@ export const updateSubAgent = async (req, res, next) => {
       });
     }
 
-    // Prevent changing parentAgent or role
+    // Prevent changing parentAgent or role (unless super_admin)
     const updateData = { ...req.body };
-    delete updateData.parentAgent;
-    delete updateData.role;
-    delete updateData.managedBy;
-    delete updateData.managedByModel;
+    if (req.user.role !== 'super_admin') {
+      delete updateData.parentAgent;
+      delete updateData.role;
+      delete updateData.managedBy;
+      delete updateData.managedByModel;
+    }
 
-    // Agents can only update their own sub-agents
     const subAgent = await User.findOneAndUpdate(
-      { _id: req.params.id, parentAgent: req.user._id, role: 'agent' },
+      query,
       updateData,
       { new: true, runValidators: true }
     )
@@ -655,20 +677,21 @@ export const updateSubAgent = async (req, res, next) => {
  */
 export const deleteSubAgent = async (req, res, next) => {
   try {
-    // Only agents can delete their sub-agents
-    if (req.user.role !== 'agent') {
+    // Only agents and super_admin can delete sub-agents
+    if (req.user.role !== 'agent' && req.user.role !== 'super_admin') {
       return res.status(403).json({
         success: false,
-        error: 'Only agents can delete sub-agents',
+        error: 'Only agents and admins can delete sub-agents',
       });
     }
 
-    // Agents can only delete their own sub-agents
-    const subAgent = await User.findOne({ 
-      _id: req.params.id, 
-      parentAgent: req.user._id, 
-      role: 'agent' 
-    });
+    // Build query: agents can only delete their own, super_admin can delete any
+    const query = { _id: req.params.id, role: 'agent' };
+    if (req.user.role === 'agent') {
+      query.parentAgent = req.user._id;
+    }
+
+    const subAgent = await User.findOne(query);
 
     if (!subAgent) {
       return res.status(404).json({
@@ -678,11 +701,7 @@ export const deleteSubAgent = async (req, res, next) => {
     }
 
     // Delete the sub-agent
-    await User.findOneAndDelete({ 
-      _id: req.params.id, 
-      parentAgent: req.user._id, 
-      role: 'agent' 
-    });
+    await User.findOneAndDelete(query);
 
     res.status(200).json({
       success: true,

@@ -82,6 +82,13 @@ const franchiseSchema = new mongoose.Schema(
       index: true,
     },
 
+    franchiseType: {
+      type: String,
+      enum: ['normal', 'GST'],
+      default: 'normal',
+      index: true,
+    },
+
     city: {
       type: String,
       required: false,

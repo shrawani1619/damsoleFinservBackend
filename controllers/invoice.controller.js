@@ -44,9 +44,10 @@ export const getInvoices = async (req, res, next) => {
     if (franchiseId && req.user.role !== 'regional_manager') query.franchise = franchiseId;
 
     const invoices = await Invoice.find(query)
-      .populate('agent', 'name email')
-      .populate('franchise', 'name')
-      .populate('lead', 'loanAccountNo loanType')
+      .populate('agent', 'name email mobile city address kyc bankDetails')
+      .populate('subAgent', 'name email mobile city address kyc bankDetails')
+      .populate('franchise', 'name email mobile address kyc bankDetails')
+      .populate('lead', 'loanAccountNo loanType customerName leadId')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -319,9 +320,57 @@ export const generateInvoiceFromLead = async (req, res, next) => {
       }
     }
 
-    const invoice = await invoiceService.generateInvoice(leadId);
+    const invoiceResult = await invoiceService.generateInvoice(leadId);
 
-    const populatedInvoice = await Invoice.findById(invoice._id)
+    // Handle split invoices (when subAgent exists)
+    if (invoiceResult.isSplit && invoiceResult.agentInvoice && invoiceResult.subAgentInvoice) {
+      const populatedAgentInvoice = await Invoice.findById(invoiceResult.agentInvoice._id)
+        .populate('lead', 'loanAccountNo loanType customerName')
+        .populate('agent', 'name email')
+        .populate('franchise', 'name');
+
+      const populatedSubAgentInvoice = await Invoice.findById(invoiceResult.subAgentInvoice._id)
+        .populate('lead', 'loanAccountNo loanType customerName')
+        .populate('agent', 'name email')
+        .populate('subAgent', 'name email')
+        .populate('franchise', 'name');
+
+      return res.status(201).json({
+        success: true,
+        message: 'Split invoices generated successfully (Agent and SubAgent)',
+        data: {
+          agentInvoice: populatedAgentInvoice,
+          subAgentInvoice: populatedSubAgentInvoice,
+          isSplit: true,
+        },
+      });
+    }
+
+    // Handle dual franchise invoices (when referral franchise exists)
+    if (invoiceResult.mainInvoice && invoiceResult.referralInvoice) {
+      const populatedMainInvoice = await Invoice.findById(invoiceResult.mainInvoice._id)
+        .populate('lead', 'loanAccountNo loanType customerName')
+        .populate('agent', 'name email')
+        .populate('franchise', 'name');
+
+      const populatedReferralInvoice = await Invoice.findById(invoiceResult.referralInvoice._id)
+        .populate('lead', 'loanAccountNo loanType customerName')
+        .populate('agent', 'name email')
+        .populate('franchise', 'name');
+
+      return res.status(201).json({
+        success: true,
+        message: 'Franchise invoices generated successfully (Main Franchise and Referral Franchise)',
+        data: {
+          mainInvoice: populatedMainInvoice,
+          referralInvoice: populatedReferralInvoice,
+          isDualFranchise: true,
+        },
+      });
+    }
+
+    // Handle single invoice (no subAgent, no referral franchise)
+    const populatedInvoice = await Invoice.findById(invoiceResult._id)
       .populate('lead', 'loanAccountNo loanType customerName')
       .populate('agent', 'name email')
       .populate('franchise', 'name');
