@@ -48,6 +48,7 @@ const corsOptions = process.env.NODE_ENV === 'production'
         'http://localhost:5173', // Vite dev server
         'http://localhost:3000',  // React dev server
         'http://localhost:5174',  // Alternative Vite port
+        'https://damsolefinserv-frontend.vercel.app',
       ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
