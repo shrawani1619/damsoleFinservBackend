@@ -63,9 +63,8 @@ const corsOptions = process.env.NODE_ENV === 'production'
       exposedHeaders: ['Content-Range', 'X-Content-Range'],
     };
 
-// Apply CORS for all routes and preflight requests
+// Apply CORS for all routes (preflight OPTIONS requests are handled here as well)
 app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
