@@ -42,13 +42,13 @@ const app = express();
 // Middleware
 // CORS configuration - allow requests from frontend
 // In development, allow all origins; in production, use specific origins
-const corsOptions = process.env.NODE_ENV === 'production' 
+const corsOptions = process.env.NODE_ENV === 'production'
   ? {
       origin: [
         'http://localhost:5173', // Vite dev server
-        'http://localhost:3000',  // React dev server
-        'http://localhost:5174',  // Alternative Vite port
-        'https://damsolefinserv-frontend.vercel.app',
+        'http://localhost:3000', // React dev server
+        'http://localhost:5174', // Alternative Vite port
+        'https://damsolefinserv-frontend.vercel.app', // Live frontend
       ],
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
@@ -63,7 +63,9 @@ const corsOptions = process.env.NODE_ENV === 'production'
       exposedHeaders: ['Content-Range', 'X-Content-Range'],
     };
 
+// Apply CORS for all routes and preflight requests
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
