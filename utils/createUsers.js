@@ -28,13 +28,19 @@ const createUsers = async () => {
     // Define users to create (excluding super_admin)
     const usersToCreate = [
       {
+        name: 'Regional Manager',
+        email: 'regionalmanager@ykc.com',
+        mobile: '2222222222',
+        password: 'regionalmanager@123',
+        role: 'regional_manager',
+      },
+      {
         name: 'Relationship Manager',
         email: 'officestaff@ykc.com',
         mobile: '1111111111',
         password: 'staff@123',
         role: 'relationship_manager',
       },
-
       {
         name: 'Franchise Owner',
         email: 'franchiseowner@ykc.com',

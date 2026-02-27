@@ -154,6 +154,12 @@ export const login = async (req, res, next) => {
       });
     }
 
+    // Migrate old role names to new ones (if needed)
+    if (user.role === 'franchise_owner') {
+      user.role = 'franchise';
+      console.log('🔄 Migrated role from franchise_owner to franchise');
+    }
+
     // Update last login
     user.lastLoginAt = new Date();
     await user.save();

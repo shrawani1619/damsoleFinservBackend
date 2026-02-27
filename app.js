@@ -32,6 +32,7 @@ import companySettingsRouter from './routes/companySettings.route.js';
 import { startTicketEscalationJob } from './jobs/ticketEscalation.job.js';
 import connectDB from './config/db.js';
 import { seedDefaultAdmin } from './utils/seedAdmin.js';
+import { seedDemoUsers } from './utils/seedUsers.js';
 import { seedSampleBankAndManager } from './utils/seedBankAndManager.js';
 import { seedFieldDefinitions } from './utils/seedFieldDefinitions.js';
 import { v2 as cloudinary } from 'cloudinary';
@@ -39,10 +40,29 @@ import { v2 as cloudinary } from 'cloudinary';
 const app = express();
 
 // Middleware
-app.use(cors({
-  origin: true,
-  credentials: true,
-}));
+// CORS configuration - allow requests from frontend
+// In development, allow all origins; in production, use specific origins
+const corsOptions = process.env.NODE_ENV === 'production' 
+  ? {
+      origin: [
+        'http://localhost:5173', // Vite dev server
+        'http://localhost:3000',  // React dev server
+        'http://localhost:5174',  // Alternative Vite port
+      ],
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+      exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    }
+  : {
+      origin: true, // Allow all origins in development
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+      exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    };
+
+app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -119,6 +139,9 @@ const startServer = async () => {
 
     // Create default admin user if it doesn't exist
     await seedDefaultAdmin();
+
+    // Create demo users for all roles (for quick login testing)
+    await seedDemoUsers();
 
     // Create a sample bank and bank manager if none exist (useful for local dev)
     await seedSampleBankAndManager();
